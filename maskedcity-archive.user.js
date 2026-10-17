@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.4.0
+// @version      0.4.1
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -167,7 +167,7 @@
     if (state?.fingerprint === fingerprint) return;
     const now = new Date().toISOString();
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.4.0', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.4.1', id: crypto.randomUUID(),
       firstObservedAt: now, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -301,7 +301,11 @@
     shadow = host.attachShadow({mode:'closed'});
     shadow.innerHTML = `<style>:host{all:initial;position:fixed;bottom:6px;left:12px;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}#bar{pointer-events:auto;background:#172332;border:1px solid #66819c;border-radius:8px;padding:8px;max-width:360px}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}#status{display:block;padding:4px;overflow-wrap:anywhere}dialog{pointer-events:auto;position:fixed;inset:auto;top:12px;left:12px;margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1100px,calc(100vw - 24px));height:clamp(420px,94dvh,1500px);max-height:min(1500px,calc(100dvh - 24px));padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}${petCss}</style><div id="bar"><strong>MaskedCity Archive</strong><br><button id="review">Review</button><button id="manual">Capture page</button><span id="status" role="status"></span></div><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="close">Close</button></div><div id="events"></div></dialog>`;
     document.body.append(host);
-    shadow.querySelector('#review').onclick = review;
+    shadow.querySelector('#review').onclick = () => {
+      const dialog = shadow.querySelector('dialog');
+      if (dialog.open) dialog.close();
+      else review();
+    };
     shadow.querySelector('#manual').onclick = manual;
     shadow.querySelector('#refresh').onclick = review;
     shadow.querySelector('#close').onclick = () => shadow.querySelector('dialog').close();

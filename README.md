@@ -47,7 +47,7 @@ If your manager reports that browser permission or a userscript setting is requi
 
 | Control | Function |
 | --- | --- |
-| **Review** | Open saved events; expand a heading to read its sections. |
+| **Review** | Toggle the archive open or closed; expand an event heading to read its sections. |
 | **Capture page** | Manually save the main game content while an event is still visible. |
 | **Refresh** | Reload the archive list, including records saved by other tabs. |
 | **Export JSON** | Download structured events and their saved revisions. |
