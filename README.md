@@ -57,6 +57,8 @@ The userscript manager's script menu also provides review, manual capture, and e
 
 Event headings show the observation time and event name on the left, with special rewards on the right. Displayed times use your browser's local timezone; JSON timestamps use UTC.
 
+Events are organized into **STREETS** and **FIGHTS** disclosures, initially collapsed. Expand a type to browse its events, then expand an event to read its sections. Manual captures and any other event types appear under **OTHER** when present. Group headings have centered labels, right/down disclosure arrows, rounded corners, and lighter hover backgrounds. Refresh preserves both group and event expansion states. HTML exports use the same grouping.
+
 The panel expands with your viewport, up to 1,500 pixels tall. Clicking outside it closes it while allowing that click to reach the game beneath it, including a visible **Fight Again** button. You can also close it with **Escape**. Opening the archive does not block the surrounding page.
 
 ## Updates

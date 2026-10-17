@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.3.0
+// @version      0.3.1
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -134,7 +134,7 @@
     if (state?.fingerprint === fingerprint) return;
     const now = new Date().toISOString();
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.3.0', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.3.1', id: crypto.randomUUID(),
       firstObservedAt: now, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -208,22 +208,38 @@
   function eventMarkup(record) {
     const latest = record.revisions.at(-1);
     const rewards = latest.specialRewards?.length ? latest.specialRewards : parseSpecialRewards(latest.text || '');
-    return `<details class="event"><summary><span>${escape(formatTime(record.firstObservedAt))} - ${escape(latest.title)}</span>${rewards.length ? `<span class="special-reward" title="SPECIAL REWARD">${escape(rewards.join(' · '))}</span>` : ''}</summary><div class="event-content"><p class="metadata">${escape(record.source.path)} · ${escape(record.captureMethod)} · ${record.revisions.length} revision(s)</p>${eventBody(latest)}`
+    return `<details class="event" data-id="${escape(record.id)}"><summary><span>${escape(formatTime(record.firstObservedAt))} - ${escape(latest.title)}</span>${rewards.length ? `<span class="special-reward" title="SPECIAL REWARD">${escape(rewards.join(' · '))}</span>` : ''}</summary><div class="event-content"><p class="metadata">${escape(record.source.path)} · ${escape(record.captureMethod)} · ${record.revisions.length} revision(s)</p>${eventBody(latest)}`
       + (record.revisions.length > 1 ? `<details class="revisions"><summary>Earlier observations (${record.revisions.length - 1})</summary>${record.revisions.slice(0,-1).map(r => `<section><h3>${escape(formatTime(r.observedAt))}</h3>${eventBody(r)}</section>`).join('')}</details>` : '')
       + '</div></details>';
   }
+  function groupedEvents(saved) {
+    const groups = [
+      {type:'streets', label:'STREETS', events:[]},
+      {type:'arena', label:'FIGHTS', events:[]},
+      {type:'other', label:'OTHER', events:[]}
+    ];
+    for (const record of saved) {
+      const type = record.revisions.at(-1)?.type;
+      (groups.find(group => group.type === type) || groups[2]).events.push(record);
+    }
+    return groups.filter(group => group.type !== 'other' || group.events.length)
+      .map(group => `<details class="event-group" data-type="${group.type}"><summary>${group.label}</summary><div class="group-events">${group.events.map(eventMarkup).join('') || '<p class="metadata">No events saved yet.</p>'}</div></details>`).join('');
+  }
+  const groupCss = `.event-group{margin-bottom:4px;border:1px solid #536b82;border-radius:6px;background:#142231;overflow:hidden}.event-group>summary{list-style:none;text-align:center;font-size:16px;font-weight:bold;letter-spacing:.05em;padding:12px 14px;cursor:pointer;border-radius:5px;background:#1c3043;transition:background-color .15s ease}.event-group>summary::-webkit-details-marker{display:none}.event-group>summary::after{content:' ▸';color:#aaceec}.event-group[open]>summary::after{content:' ▾'}.event-group>summary:hover,.event>summary:hover{background:#29445c}.event-group[open]>summary{border-bottom:1px solid #40566b;border-radius:5px 5px 0 0}.group-events{padding:0 10px}.event>summary{border-radius:5px;transition:background-color .15s ease}`;
   const contentCss = `*{box-sizing:border-box}.event{border:1px solid #536b82;border-radius:6px;margin:10px 0;background:#142231}.event>summary{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px;cursor:pointer;list-style:none;font-weight:650}.event>summary::-webkit-details-marker{display:none}.event>summary>span:first-child{min-width:0;overflow-wrap:anywhere}.event>summary>span:first-child::before{content:'▸ ';color:#9cbedb}.event[open]>summary>span:first-child::before{content:'▾ '}.event[open]>summary{border-bottom:1px solid #40566b}.special-reward{color:#ffd780;flex-shrink:0;text-align:right}.event-content{padding:4px 18px 18px}.event-section{margin-top:20px}.event-section h3{font-size:15px;color:#aaceec;margin:0 0 8px}.event-section p{margin:6px 0;line-height:1.6}.metadata{color:#9db0c4;font-size:12px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px;color:inherit}th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #30475c;vertical-align:top}th{color:#aaceec}td:not(:first-child){white-space:nowrap}.fight-log p{padding:6px 0;border-bottom:1px solid #30475c}.revisions{margin-top:20px}.revisions>summary{cursor:pointer;color:#aaceec}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.6 system-ui}summary:focus-visible,button:focus-visible{outline:2px solid #ffd780;outline-offset:2px}@media(max-width:600px){.event>summary{gap:10px;font-size:12px}.special-reward{max-width:40%;white-space:normal}.event-content{padding:4px 10px 12px}}`;
   function exportHtml() {
-    const sections = records().map(eventMarkup).join('');
-    download(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>MaskedCity Event Archive</title><style>body{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#e8edf3;background:#111820}${contentCss}</style><h1>MaskedCity Event Archive</h1><p>Recorded browser observations. Headings use this browser's local time at export; JSON retains UTC observation times.</p>${sections || '<p>No events saved.</p>'}</html>`, 'text/html', 'html');
+    const sections = groupedEvents(records());
+    download(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>MaskedCity Event Archive</title><style>body{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#e8edf3;background:#111820}${contentCss}${groupCss}</style><h1>MaskedCity Event Archive</h1><p>Recorded browser observations. Headings use this browser's local time at export; JSON retains UTC observation times.</p>${sections || '<p>No events saved.</p>'}</html>`, 'text/html', 'html');
   }
   function review() {
     const dialog = shadow.querySelector('dialog');
     const list = shadow.querySelector('#events');
     const saved = records();
     const expanded = new Set(Array.from(list.querySelectorAll('.event[open]'), el => el.dataset.id));
-    list.innerHTML = saved.map(eventMarkup).join('') || '<p>No events saved yet.</p>';
-    list.querySelectorAll('.event').forEach((el, index) => { el.dataset.id = saved[index].id; el.open = expanded.has(saved[index].id); });
+    const expandedGroups = new Set(Array.from(list.querySelectorAll('.event-group[open]'), el => el.dataset.type));
+    list.innerHTML = groupedEvents(saved);
+    list.querySelectorAll('.event').forEach(el => { el.open = expanded.has(el.dataset.id); });
+    list.querySelectorAll('.event-group').forEach(el => { el.open = expandedGroups.has(el.dataset.type); });
     if (!dialog.open) dialog.show();
   }
   function mount() {
@@ -231,7 +247,7 @@
     host = document.createElement('div');
     host.id = 'maskedcity-event-archive';
     shadow = host.attachShadow({mode:'closed'});
-    shadow.innerHTML = `<style>:host{all:initial;position:fixed;bottom:6px;left:12px;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}#bar{pointer-events:auto;background:#172332;border:1px solid #66819c;border-radius:8px;padding:8px;max-width:360px}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}#status{display:block;padding:4px;overflow-wrap:anywhere}dialog{pointer-events:auto;position:fixed;inset:auto;top:12px;left:12px;margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1100px,calc(100vw - 24px));height:clamp(420px,94dvh,1500px);max-height:min(1500px,calc(100dvh - 24px));padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}</style><div id="bar"><strong>MaskedCity Archive</strong><br><button id="review">Review</button><button id="manual">Capture page</button><span id="status" role="status"></span></div><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="close">Close</button></div><div id="events"></div></dialog>`;
+    shadow.innerHTML = `<style>:host{all:initial;position:fixed;bottom:6px;left:12px;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}#bar{pointer-events:auto;background:#172332;border:1px solid #66819c;border-radius:8px;padding:8px;max-width:360px}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}#status{display:block;padding:4px;overflow-wrap:anywhere}dialog{pointer-events:auto;position:fixed;inset:auto;top:12px;left:12px;margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1100px,calc(100vw - 24px));height:clamp(420px,94dvh,1500px);max-height:min(1500px,calc(100dvh - 24px));padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}</style><div id="bar"><strong>MaskedCity Archive</strong><br><button id="review">Review</button><button id="manual">Capture page</button><span id="status" role="status"></span></div><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="close">Close</button></div><div id="events"></div></dialog>`;
     document.body.append(host);
     shadow.querySelector('#review').onclick = review;
     shadow.querySelector('#manual').onclick = manual;
