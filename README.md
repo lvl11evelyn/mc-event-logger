@@ -10,6 +10,7 @@ Arena fight reports and Working the Streets results can disappear when you navig
 
 - **Arena:** opponent/report title, outcome, combat log, rewards, and battle statistics.
 - **Streets:** result story, cash, EXP, reputation, street progression, witnesses, alliance gains, bonus breakdown, momentum, boosts, and street level.
+- **Pet feeding:** individual meals on `/pets/<id>`, including food, displayed EXP/life gains, and any notice appended to the feeding result, such as a level-up.
 - **Special rewards:** values following `SPECIAL REWARD:`, such as Points, Explore Turns, Energy, Scraps, or Intelligence. Detection does not depend on the gift emoji.
 - **Manual capture:** save the current main game container for other events that do not yet have an automatic detector.
 - **Export:** download JSON for structured records or an HTML archive you can read offline.
@@ -42,7 +43,7 @@ If your manager reports that browser permission or a userscript setting is requi
 
 ## Using the archive
 
-**Arena and Streets capture automatically.** Perform your normal game actions; you do not need to press Capture page for supported results.
+**Arena, Streets, and pet meals capture automatically.** Perform your normal game actions; you do not need to press Capture page for supported results.
 
 | Control | Function |
 | --- | --- |
@@ -58,6 +59,10 @@ The userscript manager's script menu also provides review, manual capture, and e
 Event headings show the observation time and event name on the left, with special rewards on the right. Displayed times use your browser's local timezone; JSON timestamps use UTC.
 
 Events are organized into **STREETS** and **FIGHTS** disclosures, initially collapsed. Expand a type to browse its events, then expand an event to read its sections. Manual captures and any other event types appear under **OTHER** when present. Group headings have centered labels, right/down disclosure arrows, rounded corners, and lighter hover backgrounds. Refresh preserves both group and event expansion states. HTML exports use the same grouping.
+
+Pet feeding histories appear in a compact row with three equal-width slots. Each recorded pet has a disclosure headed by its name; expanding it shows meals newest first, with appended notices on a separate divided line. Only pets with captured meals appear. Histories are grouped by the individual pet ID, so shared names do not merge pets. The archive retains historical pets and wraps additional histories onto another row rather than deleting them. Meal observation times are available by hovering over the meal text. Pet histories are included in both export formats.
+
+Consecutive meals are recorded separately even when the page URL stays the same. New result elements and changes to the feeding notification identify subsequent observations, including identical text rewritten into the same element. Merely reopening Review or changing unrelated page content does not add a meal. The script preserves any text appended after the meal's gain summary without depending on exact level-up wording.
 
 The panel expands with your viewport, up to 1,500 pixels tall. Clicking outside it closes it while allowing that click to reach the game beneath it, including a visible **Fight Again** button. You can also close it with **Escape**. Opening the archive does not block the surrounding page.
 
@@ -80,10 +85,11 @@ There is no automatic expiry or deletion. Removing script data, uninstalling the
 ## Limitations
 
 - Capture starts after the script loads. It cannot recover results that have already disappeared.
-- Automatic detection currently supports the supplied Arena and Streets layouts. Other layouts may require manual capture or a detector update.
+- Automatic detection currently supports the supplied Arena, Streets, and pet-feeding layouts. Other layouts may require manual capture or a detector update.
 - The archive preserves observed content; it does not restore the original game page through browser Back/Forward navigation.
 - Timestamps describe when your browser observed a result, not an authoritative server event time.
 - Changes to a result container are saved as revisions. Reloading a result may create another observation of the same event; a reused container may hold multiple results as revisions.
+- Pet feeding notifications have separate meal identities rather than using the pathname as an event ID. A notification rewritten by the site can count as another observation even if it repeats an earlier message; a feeding that produces no observable DOM change cannot be detected.
 - Content never rendered in the DOM, or overwritten before the observer can read it, cannot be guaranteed captured.
 - HTML exports preserve readable content and sections rather than the game's exact styling or active controls.
 

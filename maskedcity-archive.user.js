@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.3.1
+// @version      0.4.0
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
-// @description  Automatically preserve Arena and Streets results; export JSON or offline HTML.
+// @description  Automatically preserve Arena, Streets, and pet feeding results; export JSON or offline HTML.
 // @match        https://maskedcity.com/*
 // @match        https://www.maskedcity.com/*
 // @exclude      https://maskedcity.com/wiki*
@@ -25,6 +25,7 @@
   if (!allowed()) return;
   const PREFIX = 'mc-event-v1:';
   const known = new WeakMap();
+  const petAlerts = new WeakMap();
   let host, shadow, status, error = '';
   const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
   const clean = node => (node?.textContent || '').replace(/\s+/g, ' ').trim();
@@ -119,12 +120,44 @@
       snapshotHtml: sections.map(snapshot).join('')
     };
   }
+  function capturePetMeal(alert, changed = false) {
+    const petId = location.pathname.match(/^\/pets\/(\d+)\/?$/)?.[1];
+    if (!petId) return;
+    const full = clean(alert);
+    const meal = full.match(/^(.+?) ate (.+?)\.\s*\(([^)]+)\)/);
+    if (!meal) return;
+    const [, petName, food, gains] = meal;
+    const scope = alert.closest('.content-frame') || alert.parentElement;
+    // Preserve the entire suffix without requiring a particular level-up
+    // sentence. The game appends its notices to the feeding message itself.
+    const suffix = full.slice(meal[0].length).trim();
+    const notices = suffix ? [suffix] : [];
+    const levelUps = notices.filter(line => /\blevel(?:s|led|ed)?\b/i.test(line));
+    let state = petAlerts.get(alert);
+    const base = meal[0];
+    // A notification element may be reused. A new meal gets a separate token;
+    // later context/level-up additions update that meal rather than replacing it.
+    const addedNotice = notices.some(line => !state?.notices.includes(line));
+    if (!state || state.base !== base || (changed && document.readyState !== 'loading' && !addedNotice)) {
+      state = {token: {}, base, notices: []};
+    }
+    state.notices = notices;
+    petAlerts.set(alert, state);
+    const levelAfter = clean(scope?.querySelector('.ax-stat__k'));
+    save(state.token, {
+      type:'pet-feeding', petId, petName, title:`${petName} · ${food}`,
+      food, gains, mealText:`${food}. (${gains.replace(/\blife\b/gi, 'LIFE')})`,
+      notices, levelUps, levelAfter: /^Level\s+\d+/i.test(levelAfter) ? levelAfter : '',
+      text: full,
+      snapshotHtml: snapshot(alert)
+    });
+  }
   function records() {
     return GM_listValues().filter(key => key.startsWith(PREFIX)).map(key => GM_getValue(key))
       .filter(Boolean).sort((a,b) => b.firstObservedAt.localeCompare(a.firstObservedAt));
   }
   function indicate(message) {
-    const text = message || (error ? `Save failed: ${error}` : 'Recorder ready · Arena + Streets automatic');
+    const text = message || (error ? `Save failed: ${error}` : 'Recorder ready · Arena + Streets + Pet meals automatic');
     if (status && status.textContent !== text) status.textContent = text;
   }
   function save(node, payload, forceNew = false) {
@@ -134,7 +167,7 @@
     if (state?.fingerprint === fingerprint) return;
     const now = new Date().toISOString();
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.3.1', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.4.0', id: crypto.randomUUID(),
       firstObservedAt: now, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -158,6 +191,11 @@
       if (report.matches('.arena-report') && report.querySelector('.combat-log-line')) save(report, arena(report));
       else if (report.matches('.st-hit') && clean(report.querySelector('.st-hit__line, .st-hit__cash'))) save(report, streets(report));
     });
+    if (/^\/pets\/\d+\/?$/.test(location.pathname)) {
+      const alerts = Array.from(root.querySelectorAll('.alert'));
+      if (root.matches?.('.alert')) alerts.push(root);
+      alerts.forEach(alert => capturePetMeal(alert));
+    }
   }
   function manual() {
     if (!allowed()) return;
@@ -189,6 +227,8 @@
   const section = (title, body) => body ? `<section class="event-section"><h3>${escape(title)}</h3>${body}</section>` : '';
   const paragraph = text => text ? `<p>${escape(text)}</p>` : '';
   function eventBody(current) {
+    if (current.type === 'pet-feeding') return paragraph(current.mealText)
+      + (current.notices || current.levelUps || []).map(line => `<p class="pet-level-up">${escape(line)}</p>`).join('');
     if (current.type === 'streets') {
       const momentum = current.momentumDetails;
       return section('Story', paragraph(current.story))
@@ -218,18 +258,30 @@
       {type:'arena', label:'FIGHTS', events:[]},
       {type:'other', label:'OTHER', events:[]}
     ];
+    const pets = new Map();
     for (const record of saved) {
       const type = record.revisions.at(-1)?.type;
+      if (type === 'pet-feeding') {
+        const meal = record.revisions.at(-1);
+        if (!pets.has(meal.petId)) pets.set(meal.petId, {name:meal.petName, events:[]});
+        pets.get(meal.petId).events.push(record);
+        continue;
+      }
       (groups.find(group => group.type === type) || groups[2]).events.push(record);
     }
-    return groups.filter(group => group.type !== 'other' || group.events.length)
-      .map(group => `<details class="event-group" data-type="${group.type}"><summary>${group.label}</summary><div class="group-events">${group.events.map(eventMarkup).join('') || '<p class="metadata">No events saved yet.</p>'}</div></details>`).join('');
+    const groupMarkup = group => `<details class="event-group" data-type="${group.type}"><summary>${group.label}</summary><div class="group-events">${group.events.map(eventMarkup).join('') || '<p class="metadata">No events saved yet.</p>'}</div></details>`;
+    const petMarkup = pets.size ? `<div class="pet-row" aria-label="Pet meal histories">${Array.from(pets, ([id, pet]) => `<details class="event-group pet-group" data-type="pet:${escape(id)}"><summary>${escape(pet.name)}</summary><div class="pet-meals">${pet.events.map(record => {
+      const meal = record.revisions.at(-1);
+      return `<div class="pet-meal" data-id="${escape(record.id)}"><p title="${escape(formatTime(record.firstObservedAt))}">${escape(meal.mealText)}</p>${(meal.notices || meal.levelUps || []).map(line => `<p class="pet-level-up">${escape(line)}</p>`).join('')}</div>`;
+    }).join('')}</div></details>`).join('')}</div>` : '';
+    return groups.slice(0,2).map(groupMarkup).join('') + petMarkup + (groups[2].events.length ? groupMarkup(groups[2]) : '');
   }
+  const petCss = `.pet-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;margin:8px 0}.pet-group{flex:0 0 calc((100% - 16px)/3);min-width:0}.pet-group>summary{overflow-wrap:anywhere}.pet-meals{padding:0 10px}.pet-meal{padding:10px 0;border-bottom:1px solid #40566b;overflow-wrap:anywhere}.pet-meal:last-child{border-bottom:0}.pet-meal p{margin:4px 0;line-height:1.6}.pet-level-up{border-top:1px solid #536b82;padding-top:8px;color:#ffd780}@media(max-width:600px){.pet-row{gap:4px}.pet-group{flex-basis:calc((100% - 8px)/3)}.pet-group>summary{padding:10px 4px;font-size:13px}.pet-meals{padding:0 6px}.pet-meal{font-size:12px}}`;
   const groupCss = `.event-group{margin-bottom:4px;border:1px solid #536b82;border-radius:6px;background:#142231;overflow:hidden}.event-group>summary{list-style:none;text-align:center;font-size:16px;font-weight:bold;letter-spacing:.05em;padding:12px 14px;cursor:pointer;border-radius:5px;background:#1c3043;transition:background-color .15s ease}.event-group>summary::-webkit-details-marker{display:none}.event-group>summary::after{content:' ▸';color:#aaceec}.event-group[open]>summary::after{content:' ▾'}.event-group>summary:hover,.event>summary:hover{background:#29445c}.event-group[open]>summary{border-bottom:1px solid #40566b;border-radius:5px 5px 0 0}.group-events{padding:0 10px}.event>summary{border-radius:5px;transition:background-color .15s ease}`;
   const contentCss = `*{box-sizing:border-box}.event{border:1px solid #536b82;border-radius:6px;margin:10px 0;background:#142231}.event>summary{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px;cursor:pointer;list-style:none;font-weight:650}.event>summary::-webkit-details-marker{display:none}.event>summary>span:first-child{min-width:0;overflow-wrap:anywhere}.event>summary>span:first-child::before{content:'▸ ';color:#9cbedb}.event[open]>summary>span:first-child::before{content:'▾ '}.event[open]>summary{border-bottom:1px solid #40566b}.special-reward{color:#ffd780;flex-shrink:0;text-align:right}.event-content{padding:4px 18px 18px}.event-section{margin-top:20px}.event-section h3{font-size:15px;color:#aaceec;margin:0 0 8px}.event-section p{margin:6px 0;line-height:1.6}.metadata{color:#9db0c4;font-size:12px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px;color:inherit}th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #30475c;vertical-align:top}th{color:#aaceec}td:not(:first-child){white-space:nowrap}.fight-log p{padding:6px 0;border-bottom:1px solid #30475c}.revisions{margin-top:20px}.revisions>summary{cursor:pointer;color:#aaceec}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.6 system-ui}summary:focus-visible,button:focus-visible{outline:2px solid #ffd780;outline-offset:2px}@media(max-width:600px){.event>summary{gap:10px;font-size:12px}.special-reward{max-width:40%;white-space:normal}.event-content{padding:4px 10px 12px}}`;
   function exportHtml() {
     const sections = groupedEvents(records());
-    download(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>MaskedCity Event Archive</title><style>body{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#e8edf3;background:#111820}${contentCss}${groupCss}</style><h1>MaskedCity Event Archive</h1><p>Recorded browser observations. Headings use this browser's local time at export; JSON retains UTC observation times.</p>${sections || '<p>No events saved.</p>'}</html>`, 'text/html', 'html');
+    download(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>MaskedCity Event Archive</title><style>body{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#e8edf3;background:#111820}${contentCss}${groupCss}${petCss}</style><h1>MaskedCity Event Archive</h1><p>Recorded browser observations. Headings use this browser's local time at export; JSON retains UTC observation times.</p>${sections || '<p>No events saved.</p>'}</html>`, 'text/html', 'html');
   }
   function review() {
     const dialog = shadow.querySelector('dialog');
@@ -247,7 +299,7 @@
     host = document.createElement('div');
     host.id = 'maskedcity-event-archive';
     shadow = host.attachShadow({mode:'closed'});
-    shadow.innerHTML = `<style>:host{all:initial;position:fixed;bottom:6px;left:12px;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}#bar{pointer-events:auto;background:#172332;border:1px solid #66819c;border-radius:8px;padding:8px;max-width:360px}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}#status{display:block;padding:4px;overflow-wrap:anywhere}dialog{pointer-events:auto;position:fixed;inset:auto;top:12px;left:12px;margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1100px,calc(100vw - 24px));height:clamp(420px,94dvh,1500px);max-height:min(1500px,calc(100dvh - 24px));padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}</style><div id="bar"><strong>MaskedCity Archive</strong><br><button id="review">Review</button><button id="manual">Capture page</button><span id="status" role="status"></span></div><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="close">Close</button></div><div id="events"></div></dialog>`;
+    shadow.innerHTML = `<style>:host{all:initial;position:fixed;bottom:6px;left:12px;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}#bar{pointer-events:auto;background:#172332;border:1px solid #66819c;border-radius:8px;padding:8px;max-width:360px}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}#status{display:block;padding:4px;overflow-wrap:anywhere}dialog{pointer-events:auto;position:fixed;inset:auto;top:12px;left:12px;margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1100px,calc(100vw - 24px));height:clamp(420px,94dvh,1500px);max-height:min(1500px,calc(100dvh - 24px));padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}${petCss}</style><div id="bar"><strong>MaskedCity Archive</strong><br><button id="review">Review</button><button id="manual">Capture page</button><span id="status" role="status"></span></div><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="close">Close</button></div><div id="events"></div></dialog>`;
     document.body.append(host);
     shadow.querySelector('#review').onclick = review;
     shadow.querySelector('#manual').onclick = manual;
@@ -266,6 +318,15 @@
   const observer = new MutationObserver(mutations => {
     if (!allowed()) { if (host) host.style.display = 'none'; return; }
     if (host) host.style.display = '';
+    // Process changed feeding alerts once per delivery before generic scans.
+    // Identical text rewritten into the same alert still represents a new meal.
+    const changedAlerts = new Set();
+    for (const mutation of mutations) {
+      const element = mutation.target.nodeType === 1 ? mutation.target : mutation.target.parentElement;
+      const alert = element?.closest?.('.alert');
+      if (alert && petAlerts.has(alert)) changedAlerts.add(alert);
+    }
+    changedAlerts.forEach(alert => capturePetMeal(alert, true));
     // Include detached reports: a panel inserted and removed in a single task
     // can still be captured from the mutation record's retained node.
     for (const mutation of mutations) {
