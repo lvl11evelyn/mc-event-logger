@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.4.2
+// @version      0.4.3
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -26,6 +26,7 @@
   const PREFIX = 'mc-event-v1:';
   const known = new WeakMap();
   const petAlerts = new WeakMap();
+  const PET_RESULT_SELECTOR = '.alert, #petFeedMsg';
   let host, shadow, status, error = '';
   const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
   const clean = node => (node?.textContent || '').replace(/\s+/g, ' ').trim();
@@ -125,16 +126,18 @@
     if (!petId) return;
     const full = clean(alert);
     const meal = full.match(/^(.+?) ate (.+?)\.\s*\(([^)]+)\)/);
-    if (!meal) return;
-    const [, petName, food, gains] = meal;
+    const levelMeal = full.match(/^(.+?) ate (.+?) and ((?:leveled|levelled) up\b.*)$/i);
+    if (!meal && !levelMeal) return;
+    const [, petName, food] = meal || levelMeal;
+    const gains = meal?.[3] || '';
     const scope = alert.closest('.content-frame') || alert.parentElement;
     // Preserve the entire suffix without requiring a particular level-up
     // sentence. The game appends its notices to the feeding message itself.
-    const suffix = full.slice(meal[0].length).trim();
+    const suffix = meal ? full.slice(meal[0].length).trim() : `${petName} ${levelMeal[3]}`;
     const notices = suffix ? [suffix] : [];
     const levelUps = notices.filter(line => /\blevel(?:s|led|ed)?\b/i.test(line));
     let state = petAlerts.get(alert);
-    const base = meal[0];
+    const base = meal?.[0] || `${petName} ate ${food}`;
     // A notification element may be reused. A new meal gets a separate token;
     // later context/level-up additions update that meal rather than replacing it.
     const addedNotice = notices.some(line => !state?.notices.includes(line));
@@ -146,7 +149,7 @@
     const levelAfter = clean(scope?.querySelector('.ax-stat__k'));
     save(state.token, {
       type:'pet-feeding', petId, petName, title:`${petName} · ${food}`,
-      food, gains, mealText:`${food}. (${gains.replace(/\blife\b/gi, 'LIFE')})`,
+      food, gains, mealText:`${food}.${gains ? ` (${gains.replace(/\blife\b/gi, 'LIFE')})` : ''}`,
       notices, levelUps, levelAfter: /^Level\s+\d+/i.test(levelAfter) ? levelAfter : '',
       text: full,
       snapshotHtml: snapshot(alert)
@@ -167,7 +170,7 @@
     if (state?.fingerprint === fingerprint) return;
     const now = new Date().toISOString();
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.4.2', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.4.3', id: crypto.randomUUID(),
       firstObservedAt: now, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -192,8 +195,8 @@
       else if (report.matches('.st-hit') && clean(report.querySelector('.st-hit__line, .st-hit__cash'))) save(report, streets(report));
     });
     if (/^\/pets\/\d+\/?$/.test(location.pathname)) {
-      const alerts = Array.from(root.querySelectorAll('.alert'));
-      if (root.matches?.('.alert')) alerts.push(root);
+      const alerts = Array.from(root.querySelectorAll(PET_RESULT_SELECTOR));
+      if (root.matches?.(PET_RESULT_SELECTOR)) alerts.push(root);
       alerts.forEach(alert => capturePetMeal(alert));
     }
   }
@@ -330,7 +333,7 @@
     const changedAlerts = new Set();
     for (const mutation of mutations) {
       const element = mutation.target.nodeType === 1 ? mutation.target : mutation.target.parentElement;
-      const alert = element?.closest?.('.alert');
+      const alert = element?.closest?.(PET_RESULT_SELECTOR);
       if (alert && petAlerts.has(alert)) changedAlerts.add(alert);
     }
     changedAlerts.forEach(alert => capturePetMeal(alert, true));

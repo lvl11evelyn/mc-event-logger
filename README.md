@@ -64,6 +64,10 @@ Pet feeding histories appear in a compact row with three equal-width slots. Each
 
 Consecutive meals are recorded separately even when the page URL stays the same. New result elements and changes to the feeding notification identify subsequent observations, including identical text rewritten into the same element. Merely reopening Review or changing unrelated page content does not add a meal. The script preserves any text appended after the meal's gain summary without depending on exact level-up wording.
 
+The current one-tap feeding UI is supported through its live `#petFeedMsg` result element; older `.alert` feeding results remain supported. Capture observes text changes without a page reload and also reads results inside the collapsed feed box. Food-card animations, meal counters, and failed-feed messages do not create meal entries.
+
+Level-ups also use a distinct result format, such as `Cydaea ate Brawler Brunch and leveled up to Level 17! (+1 treat)`. The logger records the meal with the level/treat notice on a separate line before the game's delayed reload. This message omits EXP/life gains from the DOM; the logger leaves those values absent rather than guessing them from the food card or intercepting network traffic. The complete result text remains in the JSON record.
+
 The panel expands with your viewport, up to 1,500 pixels tall. Clicking outside it closes it while allowing that click to reach the game beneath it, including a visible **Fight Again** button. You can also close it with **Escape**. Opening the archive does not block the surrounding page.
 
 The lower-left control block starts faded to 25% for its background, border, text, and Review button. Hovering or keyboard focus brightens it over 0.1 seconds with no delay. After leaving, it waits 0.25 seconds and fades over 0.2 seconds. **Capture page stays fully opaque and clickable throughout.** A mouse click does not leave the block permanently bright after the pointer moves away. Reduced-motion preferences disable these transitions.
