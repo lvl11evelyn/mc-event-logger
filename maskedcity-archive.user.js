@@ -2,6 +2,9 @@
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
 // @version      0.3.0
+// @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
+// @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
+// @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @description  Automatically preserve Arena and Streets results; export JSON or offline HTML.
 // @match        https://maskedcity.com/*
 // @match        https://www.maskedcity.com/*

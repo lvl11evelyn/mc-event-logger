@@ -1,2 +1,96 @@
-# mc-event-logger
-Injects a button that opens a panel that details volatile events
+# MaskedCity Event Archive
+
+A browser userscript that preserves MaskedCity's temporary event results so you can review them after leaving the page.
+
+**[Install / update](https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js)** · **[Homepage](https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md)**
+
+## What it does
+
+Arena fight reports and Working the Streets results can disappear when you navigate away. This script automatically records supported result containers as they appear or change, saves them in your userscript manager's storage, and adds an archive panel for later review.
+
+- **Arena:** opponent/report title, outcome, combat log, rewards, and battle statistics.
+- **Streets:** result story, cash, EXP, reputation, street progression, witnesses, alliance gains, bonus breakdown, momentum, boosts, and street level.
+- **Special rewards:** values following `SPECIAL REWARD:`, such as Points, Explore Turns, Energy, Scraps, or Intelligence. Detection does not depend on the gift emoji.
+- **Manual capture:** save the current main game container for other events that do not yet have an automatic detector.
+- **Export:** download JSON for structured records or an HTML archive you can read offline.
+
+The script runs on HTTPS pages at `maskedcity.com` and `www.maskedcity.com`. Paths beginning with `/wiki` are excluded.
+
+## Requirements
+
+Install **one** userscript manager in a current browser:
+
+- [Tampermonkey](https://www.tampermonkey.net/)
+- [Violentmonkey](https://violentmonkey.github.io/get-it/)
+
+Use the manager's official installation links to select a version available for your browser. No separate application, server, account, or build step is required. Enable only one installed copy of this logger to avoid duplicate captures.
+
+## Installation
+
+1. Install Tampermonkey or Violentmonkey and enable it for MaskedCity.
+2. Open the **[userscript installation link](https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js)**.
+3. Review the script in your manager's installation screen and choose **Install**.
+4. Reload any open MaskedCity tabs. The **MaskedCity Archive** control appears at the bottom left.
+
+If the link displays or downloads the source instead of opening an installer:
+
+1. Open your userscript manager's dashboard and create a new script.
+2. Replace all starter content with the complete contents of `maskedcity-archive.user.js`, including its metadata block.
+3. Save, ensure the script is enabled, and reload MaskedCity.
+
+If your manager reports that browser permission or a userscript setting is required, follow its browser-specific setup instructions. See the official [Tampermonkey documentation](https://www.tampermonkey.net/documentation.php) or [Violentmonkey guide](https://violentmonkey.github.io/guide/creating-a-userscript/).
+
+## Using the archive
+
+**Arena and Streets capture automatically.** Perform your normal game actions; you do not need to press Capture page for supported results.
+
+| Control | Function |
+| --- | --- |
+| **Review** | Open saved events; expand a heading to read its sections. |
+| **Capture page** | Manually save the main game content while an event is still visible. |
+| **Refresh** | Reload the archive list, including records saved by other tabs. |
+| **Export JSON** | Download structured events and their saved revisions. |
+| **Export HTML** | Download a standalone, readable archive with collapsible events. |
+| **Close** | Dismiss the archive panel. |
+
+The userscript manager's script menu also provides review, manual capture, and export commands.
+
+Event headings show the observation time and event name on the left, with special rewards on the right. Displayed times use your browser's local timezone; JSON timestamps use UTC.
+
+The panel expands with your viewport, up to 1,500 pixels tall. Clicking outside it closes it while allowing that click to reach the game beneath it, including a visible **Fight Again** button. You can also close it with **Escape**. Opening the archive does not block the surrounding page.
+
+## Updates
+
+The metadata points both `@updateURL` and `@downloadURL` to the repository's raw userscript URL. Automatic update checks follow your userscript manager's settings. You can also use the manager's update check or reopen the **[install / update link](https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js)**.
+
+When updating manually, replace the contents of the **existing script entry**, save, and reload game tabs. Keep the same entry to retain its stored archive. Export a backup before removing or reinstalling the script.
+
+For maintainers: increment `@version` when publishing changes so userscript managers can detect a newer release.
+
+## Storage and privacy
+
+Records are saved through the userscript manager's script-storage API and remain available across ordinary navigation and browser restarts. The logger does not upload event records or make its own network requests. Userscript-manager update checks and any browser or extension synchronization settings operate separately.
+
+Captured snapshots discard scripts, forms, input values, buttons, embedded resources, and copied HTML attributes. Source metadata omits URL query strings and fragments. Exports still contain game information such as player names and rewards, so review them before sharing.
+
+There is no automatic expiry or deletion. Removing script data, uninstalling the manager, or deleting the relevant browser profile may remove your archive. Keep periodic exports. JSON import is not currently implemented; HTML exports remain readable independently of the script.
+
+## Limitations
+
+- Capture starts after the script loads. It cannot recover results that have already disappeared.
+- Automatic detection currently supports the supplied Arena and Streets layouts. Other layouts may require manual capture or a detector update.
+- The archive preserves observed content; it does not restore the original game page through browser Back/Forward navigation.
+- Timestamps describe when your browser observed a result, not an authoritative server event time.
+- Changes to a result container are saved as revisions. Reloading a result may create another observation of the same event; a reused container may hold multiple results as revisions.
+- Content never rendered in the DOM, or overwritten before the observer can read it, cannot be guaranteed captured.
+- HTML exports preserve readable content and sections rather than the game's exact styling or active controls.
+
+## Troubleshooting
+
+**No archive control:** confirm the manager and script are enabled, check site permissions, reload the page, and make sure you are on a supported game page outside `/wiki`.
+
+**No saved event:** open Review after your next normally planned action. If the result is still visible but has not been captured automatically, use Capture page before navigating away. A changed game layout may require a detector update.
+
+**Save failed:** check your userscript manager's storage availability. Export any accessible records before clearing data or reinstalling.
+
+For capture problems, [open an issue](https://github.com/lvl11evelyn/mc-event-logger/issues) describing the event type, browser, manager, and script version. If you include a DOM sample, remove form tokens, credentials, and unrelated private content first.
