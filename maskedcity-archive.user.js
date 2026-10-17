@@ -299,7 +299,7 @@
   }
   // Fade individual surfaces, never the parent: Capture page stays opaque.
   // :focus-visible keeps keyboard use bright without sticky mouse-click focus.
-  const controlsCss = `#bar{--control-alpha:.25;background:rgb(23 35 50 / var(--control-alpha));border-color:rgb(102 129 156 / var(--control-alpha));color:rgb(237 243 250 / var(--control-alpha));transition:background-color .2s .25s,border-color .2s .25s,color .2s .25s}#review{opacity:var(--control-alpha);transition:opacity .2s .25s}#manual{opacity:1}#bar:hover,#bar:has(:focus-visible){--control-alpha:1;transition-duration:.1s;transition-delay:0s}#bar:hover #review,#bar:has(:focus-visible) #review{transition-duration:.1s;transition-delay:0s}@media(prefers-reduced-motion:reduce){#bar,#review{transition:none!important}}`;
+  const controlsCss = `#bar{--control-alpha:.05;background:rgb(23 35 50 / var(--control-alpha));border-color:rgb(102 129 156 / var(--control-alpha));color:rgb(237 243 250 / var(--control-alpha));transition:background-color .2s .25s,border-color .2s .25s,color .2s .25s}#review{opacity:var(--control-alpha);transition:opacity .2s .25s}#manual{opacity:1}#bar:hover,#bar:has(:focus-visible){--control-alpha:1;transition-duration:.1s;transition-delay:0s}#bar:hover #review,#bar:has(:focus-visible) #review{transition-duration:.1s;transition-delay:0s}@media(prefers-reduced-motion:reduce){#bar,#review{transition:none!important}}`;
   function mount() {
     if (host || !document.body || !allowed()) return;
     host = document.createElement('div');
