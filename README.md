@@ -70,7 +70,7 @@ Level-ups also use a distinct result format, such as `Cydaea ate Brawler Brunch 
 
 The panel expands with your viewport, up to 1,500 pixels tall. Clicking outside it closes it while allowing that click to reach the game beneath it, including a visible **Fight Again** button. You can also close it with **Escape**. Opening the archive does not block the surrounding page.
 
-The lower-left control block starts faded to 25% for its background, border, text, and Review button. Hovering or keyboard focus brightens it over 0.1 seconds with no delay. After leaving, it waits 0.25 seconds and fades over 0.2 seconds. **Capture page stays fully opaque and clickable throughout.** A mouse click does not leave the block permanently bright after the pointer moves away. Reduced-motion preferences disable these transitions.
+The lower-left control block's background, border, text, and Review button are fully transparent while idle. Hovering or keyboard focus reveals them over 0.1 seconds with no delay. After leaving, it waits 0.25 seconds and disappears over 0.2 seconds. **Capture page stays fully opaque and clickable throughout.** Buttons use the site's `--font-ui` family at 13px. Reduced bottom padding and a status message positioned above the block keep the capture button close to the footer's bottom edge. A mouse click does not leave the block permanently visible after the pointer moves away. Reduced-motion preferences disable these transitions.
 
 ## Updates
 

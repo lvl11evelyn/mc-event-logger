@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.4.3
+// @version      0.4.4
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -170,7 +170,7 @@
     if (state?.fingerprint === fingerprint) return;
     const now = new Date().toISOString();
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.4.3', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.4.4', id: crypto.randomUUID(),
       firstObservedAt: now, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -299,7 +299,7 @@
   }
   // Fade individual surfaces, never the parent: Capture page stays opaque.
   // :focus-visible keeps keyboard use bright without sticky mouse-click focus.
-  const controlsCss = `#bar{--control-alpha:.05;background:rgb(23 35 50 / var(--control-alpha));border-color:rgb(102 129 156 / var(--control-alpha));color:rgb(237 243 250 / var(--control-alpha));transition:background-color .2s .25s,border-color .2s .25s,color .2s .25s}#review{opacity:var(--control-alpha);transition:opacity .2s .25s}#manual{opacity:1}#bar:hover,#bar:has(:focus-visible){--control-alpha:1;transition-duration:.1s;transition-delay:0s}#bar:hover #review,#bar:has(:focus-visible) #review{transition-duration:.1s;transition-delay:0s}@media(prefers-reduced-motion:reduce){#bar,#review{transition:none!important}}`;
+  const controlsCss = `button{font-size:13px;font-family:var(--font-ui)}#bar{--control-alpha:0;position:relative;padding:8px 8px 0;background:rgb(23 35 50 / var(--control-alpha));border-color:rgb(102 129 156 / var(--control-alpha));color:rgb(237 243 250 / var(--control-alpha));transition:background-color .2s .25s,border-color .2s .25s,color .2s .25s}#status{position:absolute;bottom:100%;left:0;width:360px;max-width:calc(100vw - 24px);pointer-events:none}#review{opacity:var(--control-alpha);transition:opacity .2s .25s}#manual{opacity:1}#bar:hover,#bar:has(:focus-visible){--control-alpha:1;transition-duration:.1s;transition-delay:0s}#bar:hover #review,#bar:has(:focus-visible) #review{transition-duration:.1s;transition-delay:0s}@media(prefers-reduced-motion:reduce){#bar,#review{transition:none!important}}`;
   function mount() {
     if (host || !document.body || !allowed()) return;
     host = document.createElement('div');
