@@ -1,0 +1,270 @@
+// ==UserScript==
+// @name         MaskedCity Event Archive
+// @namespace    local.maskedcity.archive
+// @version      0.3.0
+// @description  Automatically preserve Arena and Streets results; export JSON or offline HTML.
+// @match        https://maskedcity.com/*
+// @match        https://www.maskedcity.com/*
+// @exclude      https://maskedcity.com/wiki*
+// @exclude      https://www.maskedcity.com/wiki*
+// @run-at       document-start
+// @noframes
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_listValues
+// @grant        GM_registerMenuCommand
+// ==/UserScript==
+
+(() => {
+  'use strict';
+  const allowed = () => ['maskedcity.com', 'www.maskedcity.com'].includes(location.hostname)
+    && !/^\/wiki/i.test(location.pathname);
+  if (!allowed()) return;
+  const PREFIX = 'mc-event-v1:';
+  const known = new WeakMap();
+  let host, shadow, status, error = '';
+  const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+  const clean = node => (node?.textContent || '').replace(/\s+/g, ' ').trim();
+  // Construct a passive snapshot from an allowlist. Never copy attributes,
+  // scripts, forms, remote resources, URLs, or hidden control values.
+  function snapshot(node) {
+    if (node.nodeType === 3) return escape(node.textContent);
+    if (node.nodeType !== 1) return '';
+    const tag = node.tagName.toLowerCase();
+    if (['script','style','form','input','button','textarea','select','svg','iframe','object','embed','template','noscript','img','link','meta'].includes(tag)) return '';
+    if (node.hidden || node.getAttribute('aria-hidden') === 'true') return '';
+    const body = Array.from(node.childNodes, snapshot).join('');
+    return ['div','p','span','strong','b','em','i','ul','ol','li','table','thead','tbody','tr','th','td','h1','h2','h3','h4','br','hr','section','article'].includes(tag)
+      ? `<${tag}>${body}${['br','hr'].includes(tag) ? '' : `</${tag}>`}` : body;
+  }
+  function passiveText(node) {
+    const container = document.createElement('div');
+    container.innerHTML = snapshot(node);
+    container.querySelectorAll('div,p,li,tr,h1,h2,h3,h4,br').forEach(el => el.append(document.createTextNode('\n')));
+    return container.textContent.replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  function stats(node) {
+    return Array.from(node?.querySelectorAll('.stat') || [], el => ({
+      label: clean(el.querySelector('.stat__k')), value: clean(el.querySelector('.stat__v'))
+    })).filter(row => row.label);
+  }
+  function battlePanel(report) {
+    const next = report.nextElementSibling;
+    return next && /Battle Statistics/i.test(clean(next.querySelector('.panel__title'))) ? next : null;
+  }
+  function parseSpecialRewards(text) {
+    return [...new Set(Array.from(text.matchAll(/SPECIAL REWARD:\s*(\+\s*[\d,]+(?:\.\d+)?\s*(?:Explore\s+Turns|Points?|Energy|Scraps?|Intelligence)\b|[^\n]+)/g), match => match[1].trim()))];
+  }
+  function specialRewards(node) { return parseSpecialRewards(passiveText(node)); }
+  function rewardScope(node) {
+    return node.closest('main') || node.parentElement || node;
+  }
+  function arena(report) {
+    const battle = battlePanel(report);
+    return {
+      type: 'arena', title: clean(report.querySelector('.panel__title')) || 'Arena report',
+      outcome: clean(report.querySelector('.panel__more')),
+      lines: Array.from(report.querySelectorAll('.combat-log-line'), clean),
+      rewards: stats(report), battleStatistics: stats(battle),
+      specialRewards: specialRewards(rewardScope(report)),
+      text: passiveText(report) + (battle ? '\n\n' + passiveText(battle) : ''),
+      snapshotHtml: snapshot(report) + (battle ? snapshot(battle) : '')
+    };
+  }
+  function streets(result) {
+    // The result, outcome and context are siblings. The job picker between
+    // them is deliberately excluded: available jobs aren't the completed job.
+    const siblings = Array.from(result.parentElement?.children || []);
+    const outcome = siblings.find(el => el.matches('.st-out'));
+    const context = siblings.find(el => el.matches('.st-strip'));
+    const sections = [result, outcome, context].filter(Boolean);
+    const tag = clean(result.querySelector('.st-hit__tag'));
+    return {
+      type: 'streets', title: tag ? `Streets · ${tag}` : 'Streets result',
+      outcome: tag, story: clean(result.querySelector('.st-hit__line')),
+      specialRewards: specialRewards(rewardScope(result)),
+      rewards: [
+        {label: 'Cash', value: clean(result.querySelector('.st-hit__cash'))},
+        {label: 'EXP', value: clean(result.querySelector('.st-hit__xp'))},
+        {label: 'Reputation', value: clean(result.querySelector('.st-hit__rep'))}
+      ].filter(row => row.value),
+      outcomeStatistics: Array.from(outcome?.querySelectorAll('.st-out__stat') || [], row => ({
+        label: clean(row.querySelector('.st-out__k')), value: clean(row.querySelector('.st-out__v'))
+      })),
+      bonusBreakdown: Array.from(outcome?.querySelectorAll('.st-take__brow') || [], row => ({
+        source: clean(row.querySelector('.st-take__blabel')),
+        cash: clean(row.querySelector('.st-take__bcash')),
+        exp: clean(row.querySelector('.st-take__bxp')),
+        isTotal: row.classList.contains('st-take__btotal')
+      })),
+      momentum: clean(context?.querySelector('.st-streak')),
+      boosts: Array.from(context?.querySelectorAll('.boost__row') || [], passiveText),
+      boostDetails: Array.from(context?.querySelectorAll('.boost__row') || [], row => {
+        const label = row.firstElementChild?.cloneNode(true);
+        const kind = clean(label?.querySelector('small'));
+        label?.querySelectorAll('small').forEach(el => el.remove());
+        return {label: clean(label), kind, value: clean(row.querySelector('.boost__v'))};
+      }),
+      momentumDetails: {
+        progress: clean(context?.querySelector('.st-streak-val')),
+        bonus: clean(context?.querySelector('.st-streak-pct')),
+        note: clean(context?.querySelector('.st-streak-foot'))
+      },
+      streetLevel: clean(context?.querySelector('.st-level__head')),
+      notes: clean(context?.querySelector('.st-strip__notes')),
+      text: sections.map(passiveText).join('\n\n'),
+      snapshotHtml: sections.map(snapshot).join('')
+    };
+  }
+  function records() {
+    return GM_listValues().filter(key => key.startsWith(PREFIX)).map(key => GM_getValue(key))
+      .filter(Boolean).sort((a,b) => b.firstObservedAt.localeCompare(a.firstObservedAt));
+  }
+  function indicate(message) {
+    const text = message || (error ? `Save failed: ${error}` : 'Recorder ready · Arena + Streets automatic');
+    if (status && status.textContent !== text) status.textContent = text;
+  }
+  function save(node, payload, forceNew = false) {
+    if (!allowed()) return;
+    let state = forceNew ? null : known.get(node);
+    const fingerprint = JSON.stringify(payload);
+    if (state?.fingerprint === fingerprint) return;
+    const now = new Date().toISOString();
+    const record = state ? structuredClone(state.record) : {
+      schemaVersion: 1, recorderVersion: '0.3.0', id: crypto.randomUUID(),
+      firstObservedAt: now, source: {origin: location.origin, path: location.pathname},
+      captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
+    };
+    record.lastObservedAt = now;
+    record.revisions.push({observedAt: now, ...payload});
+    try {
+      GM_setValue(PREFIX + record.id, record);
+      known.set(node, {record, fingerprint});
+      error = '';
+      indicate(`Saved ${payload.title}${payload.lines ? ` · ${payload.lines.length} log lines` : ''}`);
+    } catch (failure) {
+      error = String(failure.message || failure); indicate();
+      console.error('MaskedCity archive save failed', failure);
+    }
+  }
+  function scan(root = document) {
+    if (!allowed() || !root.querySelectorAll) return;
+    const reports = Array.from(root.querySelectorAll('.arena-report, .st-hit'));
+    if (root.matches?.('.arena-report, .st-hit')) reports.push(root);
+    reports.forEach(report => {
+      if (report.matches('.arena-report') && report.querySelector('.combat-log-line')) save(report, arena(report));
+      else if (report.matches('.st-hit') && clean(report.querySelector('.st-hit__line, .st-hit__cash'))) save(report, streets(report));
+    });
+  }
+  function manual() {
+    if (!allowed()) return;
+    const main = document.querySelector('main.page-content') || document.querySelector('main');
+    if (!main) { indicate('No main content found; nothing captured.'); return; }
+    save(main, {type: 'manual', title: clean(main.querySelector('h1,h2,.panel__title')) || document.title,
+      specialRewards: specialRewards(main),
+      text: passiveText(main), snapshotHtml: snapshot(main)}, true);
+  }
+  function download(content, type, suffix) {
+    const url = URL.createObjectURL(new Blob([content], {type}));
+    const a = document.createElement('a');
+    a.href = url; a.download = `maskedcity-archive-${new Date().toISOString().replace(/[:.]/g,'-')}.${suffix}`;
+    a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+  function exportJson() {
+    download(JSON.stringify({schemaVersion: 1, exportedAt: new Date().toISOString(), events: records()}, null, 2), 'application/json', 'json');
+  }
+  function formatTime(value) {
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return String(value);
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+      day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23'
+    }).formatToParts(date).map(part => [part.type, part.value]));
+    return `${parts.day}-${parts.month.toUpperCase()}-${parts.year} ${parts.hour}:${parts.minute}:${parts.second}`;
+  }
+  const table = (headers, rows) => rows?.length ? `<div class="table-wrap"><table><thead><tr>${headers.map(h => `<th>${escape(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${escape(cell ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '';
+  const pairs = rows => table(['Item','Value'], rows?.map(row => [row.label, row.value]));
+  const section = (title, body) => body ? `<section class="event-section"><h3>${escape(title)}</h3>${body}</section>` : '';
+  const paragraph = text => text ? `<p>${escape(text)}</p>` : '';
+  function eventBody(current) {
+    if (current.type === 'streets') {
+      const momentum = current.momentumDetails;
+      return section('Story', paragraph(current.story))
+        + section('Take', pairs(current.rewards))
+        + section('Street · Witnesses · Alliance', pairs(current.outcomeStatistics))
+        + section('Breakdown', table(['Source','Cash','EXP'], current.bonusBreakdown?.map(row => [row.source, row.cash, row.exp])))
+        + section('Momentum', momentum ? paragraph([momentum.progress, momentum.bonus].filter(Boolean).join(' · ')) + paragraph(momentum.note) : paragraph(current.momentum))
+        + section('Boosts', current.boostDetails?.length ? table(['Boost','Applies to','Value'], current.boostDetails.map(row => [row.label,row.kind,row.value])) : (current.boosts?.length ? `<ul>${current.boosts.map(boost => `<li>${escape(boost)}</li>`).join('')}</ul>` : ''))
+        + section('Street level', paragraph(current.streetLevel) + paragraph(current.notes));
+    }
+    if (current.type === 'arena') return section('Outcome', paragraph(current.outcome))
+      + section('Rewards', pairs(current.rewards))
+      + section('Battle statistics', pairs(current.battleStatistics))
+      + section('Fight log', current.lines?.length ? `<div class="fight-log">${current.lines.map(line => `<p>${escape(line)}</p>`).join('')}</div>` : '');
+    return section('Captured content', `<pre>${escape(current.text || '')}</pre>`);
+  }
+  function eventMarkup(record) {
+    const latest = record.revisions.at(-1);
+    const rewards = latest.specialRewards?.length ? latest.specialRewards : parseSpecialRewards(latest.text || '');
+    return `<details class="event"><summary><span>${escape(formatTime(record.firstObservedAt))} - ${escape(latest.title)}</span>${rewards.length ? `<span class="special-reward" title="SPECIAL REWARD">${escape(rewards.join(' · '))}</span>` : ''}</summary><div class="event-content"><p class="metadata">${escape(record.source.path)} · ${escape(record.captureMethod)} · ${record.revisions.length} revision(s)</p>${eventBody(latest)}`
+      + (record.revisions.length > 1 ? `<details class="revisions"><summary>Earlier observations (${record.revisions.length - 1})</summary>${record.revisions.slice(0,-1).map(r => `<section><h3>${escape(formatTime(r.observedAt))}</h3>${eventBody(r)}</section>`).join('')}</details>` : '')
+      + '</div></details>';
+  }
+  const contentCss = `*{box-sizing:border-box}.event{border:1px solid #536b82;border-radius:6px;margin:10px 0;background:#142231}.event>summary{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px;cursor:pointer;list-style:none;font-weight:650}.event>summary::-webkit-details-marker{display:none}.event>summary>span:first-child{min-width:0;overflow-wrap:anywhere}.event>summary>span:first-child::before{content:'▸ ';color:#9cbedb}.event[open]>summary>span:first-child::before{content:'▾ '}.event[open]>summary{border-bottom:1px solid #40566b}.special-reward{color:#ffd780;flex-shrink:0;text-align:right}.event-content{padding:4px 18px 18px}.event-section{margin-top:20px}.event-section h3{font-size:15px;color:#aaceec;margin:0 0 8px}.event-section p{margin:6px 0;line-height:1.6}.metadata{color:#9db0c4;font-size:12px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px;color:inherit}th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #30475c;vertical-align:top}th{color:#aaceec}td:not(:first-child){white-space:nowrap}.fight-log p{padding:6px 0;border-bottom:1px solid #30475c}.revisions{margin-top:20px}.revisions>summary{cursor:pointer;color:#aaceec}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.6 system-ui}summary:focus-visible,button:focus-visible{outline:2px solid #ffd780;outline-offset:2px}@media(max-width:600px){.event>summary{gap:10px;font-size:12px}.special-reward{max-width:40%;white-space:normal}.event-content{padding:4px 10px 12px}}`;
+  function exportHtml() {
+    const sections = records().map(eventMarkup).join('');
+    download(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>MaskedCity Event Archive</title><style>body{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#e8edf3;background:#111820}${contentCss}</style><h1>MaskedCity Event Archive</h1><p>Recorded browser observations. Headings use this browser's local time at export; JSON retains UTC observation times.</p>${sections || '<p>No events saved.</p>'}</html>`, 'text/html', 'html');
+  }
+  function review() {
+    const dialog = shadow.querySelector('dialog');
+    const list = shadow.querySelector('#events');
+    const saved = records();
+    const expanded = new Set(Array.from(list.querySelectorAll('.event[open]'), el => el.dataset.id));
+    list.innerHTML = saved.map(eventMarkup).join('') || '<p>No events saved yet.</p>';
+    list.querySelectorAll('.event').forEach((el, index) => { el.dataset.id = saved[index].id; el.open = expanded.has(saved[index].id); });
+    if (!dialog.open) dialog.show();
+  }
+  function mount() {
+    if (host || !document.body || !allowed()) return;
+    host = document.createElement('div');
+    host.id = 'maskedcity-event-archive';
+    shadow = host.attachShadow({mode:'closed'});
+    shadow.innerHTML = `<style>:host{all:initial;position:fixed;bottom:6px;left:12px;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}#bar{pointer-events:auto;background:#172332;border:1px solid #66819c;border-radius:8px;padding:8px;max-width:360px}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}#status{display:block;padding:4px;overflow-wrap:anywhere}dialog{pointer-events:auto;position:fixed;inset:auto;top:12px;left:12px;margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1100px,calc(100vw - 24px));height:clamp(420px,94dvh,1500px);max-height:min(1500px,calc(100dvh - 24px));padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}</style><div id="bar"><strong>MaskedCity Archive</strong><br><button id="review">Review</button><button id="manual">Capture page</button><span id="status" role="status"></span></div><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="close">Close</button></div><div id="events"></div></dialog>`;
+    document.body.append(host);
+    shadow.querySelector('#review').onclick = review;
+    shadow.querySelector('#manual').onclick = manual;
+    shadow.querySelector('#refresh').onclick = review;
+    shadow.querySelector('#close').onclick = () => shadow.querySelector('dialog').close();
+    shadow.querySelector('#json').onclick = exportJson;
+    shadow.querySelector('#html').onclick = exportHtml;
+    document.addEventListener('pointerdown', event => {
+      if (!event.composedPath().includes(host)) shadow.querySelector('dialog').close();
+    }, true);
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') shadow.querySelector('dialog').close();
+    });
+    indicate();
+  }
+  const observer = new MutationObserver(mutations => {
+    if (!allowed()) { if (host) host.style.display = 'none'; return; }
+    if (host) host.style.display = '';
+    // Include detached reports: a panel inserted and removed in a single task
+    // can still be captured from the mutation record's retained node.
+    for (const mutation of mutations) {
+      for (const node of [...mutation.addedNodes, ...mutation.removedNodes]) scan(node);
+      const element = mutation.target.nodeType === 1 ? mutation.target : mutation.target.parentElement;
+      const report = element?.closest?.('.arena-report, .st-hit');
+      if (report) scan(report);
+    }
+    scan(); mount();
+  });
+  observer.observe(document, {subtree:true, childList:true, characterData:true});
+  document.addEventListener('DOMContentLoaded', () => { scan(); mount(); }, {once:true});
+  window.addEventListener('pageshow', () => { scan(); mount(); });
+  document.addEventListener('click', () => scan(), true);
+  document.addEventListener('submit', () => scan(), true);
+  GM_registerMenuCommand('Review MaskedCity archive', () => { mount(); review(); });
+  GM_registerMenuCommand('Capture current event page', manual);
+  GM_registerMenuCommand('Export MaskedCity archive JSON', exportJson);
+  GM_registerMenuCommand('Export MaskedCity archive HTML', exportHtml);
+  scan(); mount();
+})();
