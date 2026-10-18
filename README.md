@@ -53,8 +53,12 @@ If your manager reports that browser permission or a userscript setting is requi
 | **Export JSON** | Download structured events and their saved revisions. |
 | **Export HTML** | Download a standalone, readable archive with collapsible events. |
 | **Close** | Dismiss the archive panel. |
+| **× Delete** | Remove one saved record, using the button inside its expanded body. |
+| **Undo delete** | Restore the most recently deleted record while this page remains open. |
 
 The userscript manager's script menu also provides review, manual capture, and export commands.
+
+Each expanded event has a red **×** at the top-right of its body, below the heading beside its metadata. It removes that event and all its revisions. Pet meals have a compact delete button visible when their pet disclosure is expanded. Deleted records disappear from Review and subsequent exports; existing downloaded exports are unaffected. **Undo delete** appears in the toolbar after a deletion and restores the latest deleted record. The undo copy exists only in memory for the current page and is replaced by the next deletion. A small marker prevents the current live observation from being recreated by the observer; reloading a still-visible game result can create a new observation as usual.
 
 Event headings show the observation time and event name on the left, with special rewards on the right. All displayed timestamps use MaskedCity server time (Pacific, America/Los_Angeles), including pet meals, revision headings, tooltips, HTML exports, and export filenames. New records read the visible #hudServerTimeText clock and the adjacent #v2ClockDate date. If the header is unavailable, Pacific time is derived from the observation instant with daylight-saving rules. Older records are displayed in Pacific time as well. JSON retains UTC observation instants and includes separate server-clock metadata.
 

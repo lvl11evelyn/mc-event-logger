@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.4.6
+// @version      0.4.7
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -30,6 +30,7 @@
   const SERVER_TIME_ZONE = 'America/Los_Angeles';
   const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
   let host, shadow, status, error = '';
+  let lastDeleted = null;
   const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
   const clean = node => (node?.textContent || '').replace(/\s+/g, ' ').trim();
   // Construct a passive snapshot from an allowlist. Never copy attributes,
@@ -159,7 +160,7 @@
   }
   function records() {
     return GM_listValues().filter(key => key.startsWith(PREFIX)).map(key => GM_getValue(key))
-      .filter(Boolean).sort((a,b) => b.firstObservedAt.localeCompare(a.firstObservedAt));
+      .filter(record => record && !record.deleted).sort((a,b) => b.firstObservedAt.localeCompare(a.firstObservedAt));
   }
   function serverParts(value) {
     const date = new Date(value);
@@ -203,12 +204,14 @@
   function save(node, payload, forceNew = false) {
     if (!allowed()) return;
     let state = forceNew ? null : known.get(node);
+    // Keep the deleted live observation from being saved again by its observer.
+    if (state && GM_getValue(PREFIX + state.record.id)?.deleted) return;
     const fingerprint = JSON.stringify(payload);
     if (state?.fingerprint === fingerprint) return;
     const now = new Date().toISOString();
     const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.4.6', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.4.7', id: crypto.randomUUID(),
       firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -294,14 +297,35 @@
       + section('Fight log', current.lines?.length ? `<div class="fight-log">${current.lines.map(line => `<p>${escape(line)}</p>`).join('')}</div>` : '');
     return section('Captured content', `<pre>${escape(current.text || '')}</pre>`);
   }
-  function eventMarkup(record) {
+  function deleteControl(record) {
+    return `<button type="button" class="delete-event" data-delete-id="${escape(record.id)}" aria-label="Delete ${escape(record.revisions.at(-1).title)}" title="Delete this record">×</button>`;
+  }
+  function deleteRecord(id) {
+    const record=GM_getValue(PREFIX+id);
+    if (!record || record.deleted) return;
+    try {
+      // Remove its content while retaining a small suppression marker. Undo
+      // keeps only the latest deleted record in memory until this page closes.
+      GM_setValue(PREFIX+id,{id,deleted:true});
+      lastDeleted=record;
+      review(); indicate('Record deleted · Undo is available in the panel.');
+    } catch(failure) { indicate(`Delete failed: ${failure.message || failure}`); }
+  }
+  function undoDelete() {
+    if (!lastDeleted) return;
+    try {
+      GM_setValue(PREFIX+lastDeleted.id,lastDeleted);
+      lastDeleted=null; review(); indicate('Record restored.');
+    } catch(failure) { indicate(`Restore failed: ${failure.message || failure}`); }
+  }
+  function eventMarkup(record, editable = false) {
     const latest = record.revisions.at(-1);
     const rewards = latest.specialRewards?.length ? latest.specialRewards : parseSpecialRewards(latest.text || '');
-    return `<details class="event" data-id="${escape(record.id)}"><summary><span>${escape(formatTime(record.firstObservedAt, record.firstServerTime))} - ${escape(latest.title)}</span>${rewards.length ? `<span class="special-reward" title="SPECIAL REWARD">${escape(rewards.join(' · '))}</span>` : ''}</summary><div class="event-content"><p class="metadata">${escape(record.source.path)} · ${escape(record.captureMethod)} · ${record.revisions.length} revision(s)</p>${eventBody(latest)}`
+    return `<details class="event" data-id="${escape(record.id)}"><summary><span>${escape(formatTime(record.firstObservedAt, record.firstServerTime))} - ${escape(latest.title)}</span>${rewards.length ? `<span class="special-reward" title="SPECIAL REWARD">${escape(rewards.join(' · '))}</span>` : ''}</summary><div class="event-content"><div class="event-meta-row"><p class="metadata">${escape(record.source.path)} · ${escape(record.captureMethod)} · ${record.revisions.length} revision(s)</p>${editable ? deleteControl(record) : ''}</div>${eventBody(latest)}`
       + (record.revisions.length > 1 ? `<details class="revisions"><summary>Earlier observations (${record.revisions.length - 1})</summary>${record.revisions.slice(0,-1).map(r => `<section><h3>${escape(formatTime(r.observedAt, r.serverTime))}</h3>${eventBody(r)}</section>`).join('')}</details>` : '')
       + '</div></details>';
   }
-  function groupedEvents(saved) {
+  function groupedEvents(saved, editable = false) {
     const groups = [
       {type:'streets', label:'STREETS', events:[]},
       {type:'arena', label:'FIGHTS', events:[]},
@@ -318,10 +342,10 @@
       }
       (groups.find(group => group.type === type) || groups[2]).events.push(record);
     }
-    const groupMarkup = group => `<details class="event-group" data-type="${group.type}"><summary>${group.label}</summary><div class="group-events">${group.events.map(eventMarkup).join('') || '<p class="metadata">No events saved yet.</p>'}</div></details>`;
+    const groupMarkup = group => `<details class="event-group" data-type="${group.type}"><summary>${group.label}</summary><div class="group-events">${group.events.map(record=>eventMarkup(record,editable)).join('') || '<p class="metadata">No events saved yet.</p>'}</div></details>`;
     const petMarkup = pets.size ? `<div class="pet-row" aria-label="Pet meal histories">${Array.from(pets, ([id, pet]) => `<details class="event-group pet-group" data-type="pet:${escape(id)}"><summary>${escape(pet.name)}</summary><div class="pet-meals">${pet.events.map(record => {
       const meal = record.revisions.at(-1);
-      return `<div class="pet-meal" data-id="${escape(record.id)}"><div class="pet-meal-heading"><p>${escape(meal.mealText)}</p><time class="pet-time" datetime="${escape(record.firstObservedAt)}" title="${escape(formatTime(record.firstObservedAt, record.firstServerTime))}">${escape(formatMealTime(record.firstObservedAt, record.firstServerTime))}</time></div>${(meal.notices || meal.levelUps || []).map(line => `<p class="pet-level-up">${escape(line)}</p>`).join('')}</div>`;
+      return `<div class="pet-meal" data-id="${escape(record.id)}"><div class="pet-meal-heading"><p>${escape(meal.mealText)}</p><time class="pet-time" datetime="${escape(record.firstObservedAt)}" title="${escape(formatTime(record.firstObservedAt, record.firstServerTime))}">${escape(formatMealTime(record.firstObservedAt, record.firstServerTime))}</time>${editable ? deleteControl(record) : ''}</div>${(meal.notices || meal.levelUps || []).map(line => `<p class="pet-level-up">${escape(line)}</p>`).join('')}</div>`;
     }).join('')}</div></details>`).join('')}</div>` : '';
     return groups.slice(0,2).map(groupMarkup).join('') + petMarkup + (groups[2].events.length ? groupMarkup(groups[2]) : '');
   }
@@ -338,20 +362,21 @@
     const saved = records();
     const expanded = new Set(Array.from(list.querySelectorAll('.event[open]'), el => el.dataset.id));
     const expandedGroups = new Set(Array.from(list.querySelectorAll('.event-group[open]'), el => el.dataset.type));
-    list.innerHTML = groupedEvents(saved);
+    list.innerHTML = groupedEvents(saved,true);
+    shadow.querySelector('#undo').hidden=!lastDeleted;
     list.querySelectorAll('.event').forEach(el => { el.open = expanded.has(el.dataset.id); });
     list.querySelectorAll('.event-group').forEach(el => { el.open = expandedGroups.has(el.dataset.type); });
     if (!dialog.open) dialog.show();
   }
   // Fade individual surfaces, never the parent: Capture page stays opaque.
   // :focus-visible keeps keyboard use bright without sticky mouse-click focus.
-  const controlsCss = `button{font-size:13px;font-family:var(--font-ui)}#bar{--control-alpha:0;position:relative;padding:8px 8px 0;background:rgb(23 35 50 / var(--control-alpha));border-color:rgb(102 129 156 / var(--control-alpha));color:rgb(237 243 250 / var(--control-alpha));transition:background-color .2s .25s,border-color .2s .25s,color .2s .25s}#status{position:absolute;bottom:100%;left:0;width:360px;max-width:calc(100vw - 24px);pointer-events:none}#review{opacity:var(--control-alpha);transition:opacity .2s .25s}#manual{opacity:1}#bar:hover,#bar:has(:focus-visible){--control-alpha:1;transition-duration:.1s;transition-delay:0s}#bar:hover #review,#bar:has(:focus-visible) #review{transition-duration:.1s;transition-delay:0s}@media(prefers-reduced-motion:reduce){#bar,#review{transition:none!important}}`;
+  const controlsCss = `button{font-size:13px;font-family:var(--font-ui)}.event-meta-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.event-meta-row .metadata{min-width:0;overflow-wrap:anywhere}.delete-event{flex:none;width:30px;height:30px;padding:0;margin:6px 0;background:#8f2028;border-color:#db6570;color:#fff;font:24px/1 system-ui;border-radius:4px}.delete-event:hover{background:#bc2935}.pet-meal-heading .delete-event{width:22px;height:22px;margin:0;font-size:18px}#bar{--control-alpha:0;position:relative;padding:8px 8px 0;background:rgb(23 35 50 / var(--control-alpha));border-color:rgb(102 129 156 / var(--control-alpha));color:rgb(237 243 250 / var(--control-alpha));transition:background-color .2s .25s,border-color .2s .25s,color .2s .25s}#status{position:absolute;bottom:100%;left:0;width:360px;max-width:calc(100vw - 24px);pointer-events:none}#review{opacity:var(--control-alpha);transition:opacity .2s .25s}#manual{opacity:1}#bar:hover,#bar:has(:focus-visible){--control-alpha:1;transition-duration:.1s;transition-delay:0s}#bar:hover #review,#bar:has(:focus-visible) #review{transition-duration:.1s;transition-delay:0s}@media(prefers-reduced-motion:reduce){#bar,#review{transition:none!important}}`;
   function mount() {
     if (host || !document.body || !allowed()) return;
     host = document.createElement('div');
     host.id = 'maskedcity-event-archive';
     shadow = host.attachShadow({mode:'closed'});
-    shadow.innerHTML = `<style>:host{all:initial;position:fixed;bottom:6px;left:12px;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}#bar{pointer-events:auto;background:#172332;border:1px solid #66819c;border-radius:8px;padding:8px;max-width:360px}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}#status{display:block;padding:4px;overflow-wrap:anywhere}dialog{pointer-events:auto;position:fixed;inset:auto;top:12px;left:12px;margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1180px,calc(100vw - 24px));height:clamp(420px,94dvh,1500px);max-height:min(1500px,calc(100dvh - 24px));padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}${petCss}${controlsCss}</style><div id="bar"><strong>MaskedCity Archive</strong><br><button id="review">Review</button><button id="manual">Capture page</button><span id="status" role="status"></span></div><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="close">Close</button></div><div id="events"></div></dialog>`;
+    shadow.innerHTML = `<style>:host{all:initial;position:fixed;bottom:6px;left:12px;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}#bar{pointer-events:auto;background:#172332;border:1px solid #66819c;border-radius:8px;padding:8px;max-width:360px}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}#status{display:block;padding:4px;overflow-wrap:anywhere}dialog{pointer-events:auto;position:fixed;inset:auto;top:12px;left:12px;margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1180px,calc(100vw - 24px));height:clamp(420px,94dvh,1500px);max-height:min(1500px,calc(100dvh - 24px));padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}${petCss}${controlsCss}</style><div id="bar"><strong>MaskedCity Archive</strong><br><button id="review">Review</button><button id="manual">Capture page</button><span id="status" role="status"></span></div><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="undo" hidden>Undo delete</button><button id="close">Close</button></div><div id="events"></div></dialog>`;
     document.body.append(host);
     shadow.querySelector('#review').onclick = () => {
       const dialog = shadow.querySelector('dialog');
@@ -363,6 +388,11 @@
     shadow.querySelector('#close').onclick = () => shadow.querySelector('dialog').close();
     shadow.querySelector('#json').onclick = exportJson;
     shadow.querySelector('#html').onclick = exportHtml;
+    shadow.querySelector('#undo').onclick = undoDelete;
+    shadow.querySelector('#events').addEventListener('click', event => {
+      const button=event.target.closest('button[data-delete-id]');
+      if (button) deleteRecord(button.dataset.deleteId);
+    });
     document.addEventListener('pointerdown', event => {
       if (!event.composedPath().includes(host)) shadow.querySelector('dialog').close();
     }, true);
