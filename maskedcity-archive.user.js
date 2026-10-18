@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.4.4
+// @version      0.4.6
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -27,6 +27,8 @@
   const known = new WeakMap();
   const petAlerts = new WeakMap();
   const PET_RESULT_SELECTOR = '.alert, #petFeedMsg';
+  const SERVER_TIME_ZONE = 'America/Los_Angeles';
+  const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
   let host, shadow, status, error = '';
   const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
   const clean = node => (node?.textContent || '').replace(/\s+/g, ' ').trim();
@@ -159,6 +161,41 @@
     return GM_listValues().filter(key => key.startsWith(PREFIX)).map(key => GM_getValue(key))
       .filter(Boolean).sort((a,b) => b.firstObservedAt.localeCompare(a.firstObservedAt));
   }
+  function serverParts(value) {
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return null;
+    const fields = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+      timeZone:SERVER_TIME_ZONE, year:'numeric',month:'2-digit',day:'2-digit',
+      hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'
+    }).formatToParts(date).map(part=>[part.type,part.value]));
+    return Object.fromEntries(['year','month','day','hour','minute','second'].map(key=>[key,Number(fields[key])]));
+  }
+  function readServerTime(value) {
+    const parts = serverParts(value);
+    if (!parts) return null;
+    const clock = clean(document.querySelector('#hudServerTimeText'));
+    const match = clock.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+    let source = 'pacific-fallback';
+    if (match) {
+      let hour = Number(match[1]);
+      const minute=Number(match[2]),second=Number(match[3] || 0),period=match[4]?.toUpperCase();
+      if (minute<60 && second<60 && (period ? hour>=1 && hour<=12 : hour<24)) {
+        if (period) hour=hour%12+(period==='PM'?12:0);
+        Object.assign(parts,{hour,minute,second}); source='header';
+        const headerDate=clean(document.querySelector('#v2ClockDate')).match(/\b([A-Za-z]{3})\s+(\d{1,2})\b/);
+        const month=headerDate ? MONTHS.indexOf(headerDate[1].toUpperCase())+1 : 0;
+        if (month && Number(headerDate[2])>=1 && Number(headerDate[2])<=31) {
+          const day=Number(headerDate[2]);
+          // Header dates omit the year. Select the closest year around the
+          // current Pacific date, including Dec/Jan boundaries.
+          const reference=Date.UTC(parts.year,parts.month-1,parts.day);
+          const year=[parts.year-1,parts.year,parts.year+1].sort((a,b)=>Math.abs(Date.UTC(a,month-1,day)-reference)-Math.abs(Date.UTC(b,month-1,day)-reference))[0];
+          Object.assign(parts,{year,month,day});
+        }
+      }
+    }
+    return {...parts,timeZone:SERVER_TIME_ZONE,source};
+  }
   function indicate(message) {
     const text = message || (error ? `Save failed: ${error}` : 'Recorder ready · Arena + Streets + Pet meals automatic');
     if (status && status.textContent !== text) status.textContent = text;
@@ -169,13 +206,15 @@
     const fingerprint = JSON.stringify(payload);
     if (state?.fingerprint === fingerprint) return;
     const now = new Date().toISOString();
+    const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.4.4', id: crypto.randomUUID(),
-      firstObservedAt: now, source: {origin: location.origin, path: location.pathname},
+      schemaVersion: 1, recorderVersion: '0.4.6', id: crypto.randomUUID(),
+      firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
     record.lastObservedAt = now;
-    record.revisions.push({observedAt: now, ...payload});
+    record.lastServerTime = serverTime;
+    record.revisions.push({observedAt: now, serverTime, ...payload});
     try {
       GM_setValue(PREFIX + record.id, record);
       known.set(node, {record, fingerprint});
@@ -211,19 +250,26 @@
   function download(content, type, suffix) {
     const url = URL.createObjectURL(new Blob([content], {type}));
     const a = document.createElement('a');
-    a.href = url; a.download = `maskedcity-archive-${new Date().toISOString().replace(/[:.]/g,'-')}.${suffix}`;
+    const stamp=readServerTime(new Date().toISOString());
+    const two=number=>String(number).padStart(2,'0');
+    a.href = url; a.download = `maskedcity-archive-${stamp.year}-${two(stamp.month)}-${two(stamp.day)}-${two(stamp.hour)}${two(stamp.minute)}${two(stamp.second)}-Pacific.${suffix}`;
     a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
   function exportJson() {
-    download(JSON.stringify({schemaVersion: 1, exportedAt: new Date().toISOString(), events: records()}, null, 2), 'application/json', 'json');
+    const exportedAt=new Date().toISOString();
+    download(JSON.stringify({schemaVersion: 1, exportedAt, exportedServerTime:readServerTime(exportedAt), timeZone:SERVER_TIME_ZONE, events: records()}, null, 2), 'application/json', 'json');
   }
-  function formatTime(value) {
-    const date = new Date(value);
-    if (!Number.isFinite(date.getTime())) return String(value);
-    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
-      day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23'
-    }).formatToParts(date).map(part => [part.type, part.value]));
-    return `${parts.day}-${parts.month.toUpperCase()}-${parts.year} ${parts.hour}:${parts.minute}:${parts.second}`;
+  function formatTime(value, recordedServerTime) {
+    const parts=recordedServerTime || serverParts(value);
+    if (!parts) return String(value);
+    const two=number=>String(number).padStart(2,'0');
+    return `${two(parts.day)}-${MONTHS[parts.month-1]}-${parts.year} ${two(parts.hour)}:${two(parts.minute)}:${two(parts.second)}`;
+  }
+  function formatMealTime(value, recordedServerTime) {
+    const parts=recordedServerTime || serverParts(value);
+    if (!parts) return '????-??-??';
+    const two = number => String(number).padStart(2, '0');
+    return `${two(parts.hour)}${two(parts.minute)}-${two(parts.day)}-${two(parts.month)}`;
   }
   const table = (headers, rows) => rows?.length ? `<div class="table-wrap"><table><thead><tr>${headers.map(h => `<th>${escape(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${escape(cell ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '';
   const pairs = rows => table(['Item','Value'], rows?.map(row => [row.label, row.value]));
@@ -251,8 +297,8 @@
   function eventMarkup(record) {
     const latest = record.revisions.at(-1);
     const rewards = latest.specialRewards?.length ? latest.specialRewards : parseSpecialRewards(latest.text || '');
-    return `<details class="event" data-id="${escape(record.id)}"><summary><span>${escape(formatTime(record.firstObservedAt))} - ${escape(latest.title)}</span>${rewards.length ? `<span class="special-reward" title="SPECIAL REWARD">${escape(rewards.join(' · '))}</span>` : ''}</summary><div class="event-content"><p class="metadata">${escape(record.source.path)} · ${escape(record.captureMethod)} · ${record.revisions.length} revision(s)</p>${eventBody(latest)}`
-      + (record.revisions.length > 1 ? `<details class="revisions"><summary>Earlier observations (${record.revisions.length - 1})</summary>${record.revisions.slice(0,-1).map(r => `<section><h3>${escape(formatTime(r.observedAt))}</h3>${eventBody(r)}</section>`).join('')}</details>` : '')
+    return `<details class="event" data-id="${escape(record.id)}"><summary><span>${escape(formatTime(record.firstObservedAt, record.firstServerTime))} - ${escape(latest.title)}</span>${rewards.length ? `<span class="special-reward" title="SPECIAL REWARD">${escape(rewards.join(' · '))}</span>` : ''}</summary><div class="event-content"><p class="metadata">${escape(record.source.path)} · ${escape(record.captureMethod)} · ${record.revisions.length} revision(s)</p>${eventBody(latest)}`
+      + (record.revisions.length > 1 ? `<details class="revisions"><summary>Earlier observations (${record.revisions.length - 1})</summary>${record.revisions.slice(0,-1).map(r => `<section><h3>${escape(formatTime(r.observedAt, r.serverTime))}</h3>${eventBody(r)}</section>`).join('')}</details>` : '')
       + '</div></details>';
   }
   function groupedEvents(saved) {
@@ -275,16 +321,16 @@
     const groupMarkup = group => `<details class="event-group" data-type="${group.type}"><summary>${group.label}</summary><div class="group-events">${group.events.map(eventMarkup).join('') || '<p class="metadata">No events saved yet.</p>'}</div></details>`;
     const petMarkup = pets.size ? `<div class="pet-row" aria-label="Pet meal histories">${Array.from(pets, ([id, pet]) => `<details class="event-group pet-group" data-type="pet:${escape(id)}"><summary>${escape(pet.name)}</summary><div class="pet-meals">${pet.events.map(record => {
       const meal = record.revisions.at(-1);
-      return `<div class="pet-meal" data-id="${escape(record.id)}"><p title="${escape(formatTime(record.firstObservedAt))}">${escape(meal.mealText)}</p>${(meal.notices || meal.levelUps || []).map(line => `<p class="pet-level-up">${escape(line)}</p>`).join('')}</div>`;
+      return `<div class="pet-meal" data-id="${escape(record.id)}"><div class="pet-meal-heading"><p>${escape(meal.mealText)}</p><time class="pet-time" datetime="${escape(record.firstObservedAt)}" title="${escape(formatTime(record.firstObservedAt, record.firstServerTime))}">${escape(formatMealTime(record.firstObservedAt, record.firstServerTime))}</time></div>${(meal.notices || meal.levelUps || []).map(line => `<p class="pet-level-up">${escape(line)}</p>`).join('')}</div>`;
     }).join('')}</div></details>`).join('')}</div>` : '';
     return groups.slice(0,2).map(groupMarkup).join('') + petMarkup + (groups[2].events.length ? groupMarkup(groups[2]) : '');
   }
-  const petCss = `.pet-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;margin:8px 0}.pet-group{flex:0 0 calc((100% - 16px)/3);min-width:0}.pet-group>summary{overflow-wrap:anywhere}.pet-meals{padding:0 10px}.pet-meal{padding:10px 0;border-bottom:1px solid #40566b;overflow-wrap:anywhere}.pet-meal:last-child{border-bottom:0}.pet-meal p{margin:4px 0;line-height:1.6}.pet-level-up{border-top:1px solid #536b82;padding-top:8px;color:#ffd780}@media(max-width:600px){.pet-row{gap:4px}.pet-group{flex-basis:calc((100% - 8px)/3)}.pet-group>summary{padding:10px 4px;font-size:13px}.pet-meals{padding:0 6px}.pet-meal{font-size:12px}}`;
+  const petCss = `.pet-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;margin:8px 0}.pet-group{flex:0 0 calc((100% - 16px)/3);min-width:0}.pet-group>summary{overflow-wrap:anywhere}.pet-meals{padding:0 10px}.pet-meal{padding:10px 0;border-bottom:1px solid #40566b;overflow-wrap:anywhere}.pet-meal:last-child{border-bottom:0}.pet-meal p{margin:4px 0;line-height:1.6}.pet-meal-heading{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px 8px}.pet-meal-heading p{flex:1 1 120px}.pet-time{font:11px ui-monospace,monospace;color:#9db0c4;font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}.pet-level-up{border-top:1px solid #536b82;padding-top:8px;color:#ffd780}@media(max-width:600px){.pet-row{gap:4px}.pet-group{flex-basis:calc((100% - 8px)/3)}.pet-group>summary{padding:10px 4px;font-size:13px}.pet-meals{padding:0 6px}.pet-meal{font-size:12px}}`;
   const groupCss = `.event-group{margin-bottom:4px;border:1px solid #536b82;border-radius:6px;background:#142231;overflow:hidden}.event-group>summary{list-style:none;text-align:center;font-size:16px;font-weight:bold;letter-spacing:.05em;padding:12px 14px;cursor:pointer;border-radius:5px;background:#1c3043;transition:background-color .15s ease}.event-group>summary::-webkit-details-marker{display:none}.event-group>summary::after{content:' ▸';color:#aaceec}.event-group[open]>summary::after{content:' ▾'}.event-group>summary:hover,.event>summary:hover{background:#29445c}.event-group[open]>summary{border-bottom:1px solid #40566b;border-radius:5px 5px 0 0}.group-events{padding:0 10px}.event>summary{border-radius:5px;transition:background-color .15s ease}`;
   const contentCss = `*{box-sizing:border-box}.event{border:1px solid #536b82;border-radius:6px;margin:10px 0;background:#142231}.event>summary{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px;cursor:pointer;list-style:none;font-weight:650}.event>summary::-webkit-details-marker{display:none}.event>summary>span:first-child{min-width:0;overflow-wrap:anywhere}.event>summary>span:first-child::before{content:'▸ ';color:#9cbedb}.event[open]>summary>span:first-child::before{content:'▾ '}.event[open]>summary{border-bottom:1px solid #40566b}.special-reward{color:#ffd780;flex-shrink:0;text-align:right}.event-content{padding:4px 18px 18px}.event-section{margin-top:20px}.event-section h3{font-size:15px;color:#aaceec;margin:0 0 8px}.event-section p{margin:6px 0;line-height:1.6}.metadata{color:#9db0c4;font-size:12px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px;color:inherit}th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #30475c;vertical-align:top}th{color:#aaceec}td:not(:first-child){white-space:nowrap}.fight-log p{padding:6px 0;border-bottom:1px solid #30475c}.revisions{margin-top:20px}.revisions>summary{cursor:pointer;color:#aaceec}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.6 system-ui}summary:focus-visible,button:focus-visible{outline:2px solid #ffd780;outline-offset:2px}@media(max-width:600px){.event>summary{gap:10px;font-size:12px}.special-reward{max-width:40%;white-space:normal}.event-content{padding:4px 10px 12px}}`;
   function exportHtml() {
     const sections = groupedEvents(records());
-    download(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>MaskedCity Event Archive</title><style>body{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#e8edf3;background:#111820}${contentCss}${groupCss}${petCss}</style><h1>MaskedCity Event Archive</h1><p>Recorded browser observations. Headings use this browser's local time at export; JSON retains UTC observation times.</p>${sections || '<p>No events saved.</p>'}</html>`, 'text/html', 'html');
+    download(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>MaskedCity Event Archive</title><style>body{max-width:1180px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#e8edf3;background:#111820}${contentCss}${groupCss}${petCss}</style><h1>MaskedCity Event Archive</h1><p>Recorded browser observations. All displayed times use MaskedCity server time (Pacific); JSON also retains UTC observation times.</p>${sections || '<p>No events saved.</p>'}</html>`, 'text/html', 'html');
   }
   function review() {
     const dialog = shadow.querySelector('dialog');
@@ -305,7 +351,7 @@
     host = document.createElement('div');
     host.id = 'maskedcity-event-archive';
     shadow = host.attachShadow({mode:'closed'});
-    shadow.innerHTML = `<style>:host{all:initial;position:fixed;bottom:6px;left:12px;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}#bar{pointer-events:auto;background:#172332;border:1px solid #66819c;border-radius:8px;padding:8px;max-width:360px}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}#status{display:block;padding:4px;overflow-wrap:anywhere}dialog{pointer-events:auto;position:fixed;inset:auto;top:12px;left:12px;margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1100px,calc(100vw - 24px));height:clamp(420px,94dvh,1500px);max-height:min(1500px,calc(100dvh - 24px));padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}${petCss}${controlsCss}</style><div id="bar"><strong>MaskedCity Archive</strong><br><button id="review">Review</button><button id="manual">Capture page</button><span id="status" role="status"></span></div><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="close">Close</button></div><div id="events"></div></dialog>`;
+    shadow.innerHTML = `<style>:host{all:initial;position:fixed;bottom:6px;left:12px;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}#bar{pointer-events:auto;background:#172332;border:1px solid #66819c;border-radius:8px;padding:8px;max-width:360px}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}#status{display:block;padding:4px;overflow-wrap:anywhere}dialog{pointer-events:auto;position:fixed;inset:auto;top:12px;left:12px;margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1180px,calc(100vw - 24px));height:clamp(420px,94dvh,1500px);max-height:min(1500px,calc(100dvh - 24px));padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}${petCss}${controlsCss}</style><div id="bar"><strong>MaskedCity Archive</strong><br><button id="review">Review</button><button id="manual">Capture page</button><span id="status" role="status"></span></div><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="close">Close</button></div><div id="events"></div></dialog>`;
     document.body.append(host);
     shadow.querySelector('#review').onclick = () => {
       const dialog = shadow.querySelector('dialog');
