@@ -11,7 +11,7 @@ Arena fight reports and Working the Streets results can disappear when you navig
 - **Arena:** opponent/report title, outcome, combat log, rewards, and battle statistics.
 - **Streets:** result story, cash, EXP, reputation, street progression, witnesses, alliance gains, bonus breakdown, momentum, boosts, and street level.
 - **Pet feeding:** individual meals on `/pets/<id>`, including food, displayed EXP/life gains, and any notice appended to the feeding result, such as a level-up.
-- **Special rewards:** values following `SPECIAL REWARD:`, such as Points, Explore Turns, Energy, Scraps, or Intelligence. Detection does not depend on the gift emoji.
+- **Special rewards:** labels inside `.reward-banner .reward-label` (including Streets' Lucky Break rewards), plus the older `SPECIAL REWARD:` format. Points, Explore Turns, Energy, Scraps, Intelligence, and other banner labels are captured without depending on icons or emoji.
 - **Manual capture:** save the current main game container for other events that do not yet have an automatic detector.
 - **Export:** download JSON for structured records or an HTML archive you can read offline.
 
@@ -61,6 +61,8 @@ The userscript manager's script menu also provides review, manual capture, and e
 Each expanded event has a red **×** at the top-right of its body, below the heading beside its metadata. It removes that event and all its revisions. Pet meals have a compact delete button visible when their pet disclosure is expanded. Deleted records disappear from Review and subsequent exports; existing downloaded exports are unaffected. **Undo delete** appears in the toolbar after a deletion and restores the latest deleted record. The undo copy exists only in memory for the current page and is replaced by the next deletion. A small marker prevents the current live observation from being recreated by the observer; reloading a still-visible game result can create a new observation as usual.
 
 Event headings show the observation time and event name on the left, with special rewards on the right. All displayed timestamps use MaskedCity server time (Pacific, America/Los_Angeles), including pet meals, revision headings, tooltips, HTML exports, and export filenames. New records read the visible #hudServerTimeText clock and the adjacent #v2ClockDate date. If the header is unavailable, Pacific time is derived from the observation instant with daylight-saving rules. Older records are displayed in Pacific time as well. JSON retains UTC observation instants and includes separate server-clock metadata.
+
+Streets rewards are captured as soon as the result appears, including banners added after the initial result. Performing the next action can replace the live result, but the prior record retains its reward. If an older saved record includes the supplied `Lucky Break! Bonus reward received.` banner text followed by its amount, its header can display that reward too. Missing content that was never saved cannot be recovered. Duplicate labels expressed in both the banner and old prefix format are shown once.
 
 Events are organized into **STREETS** and **FIGHTS** disclosures, initially collapsed. Expand a type to browse its events, then expand an event to read its sections. Manual captures and any other event types appear under **OTHER** when present. Group headings have centered labels, right/down disclosure arrows, rounded corners, and lighter hover backgrounds. Refresh preserves both group and event expansion states. HTML exports use the same grouping.
 

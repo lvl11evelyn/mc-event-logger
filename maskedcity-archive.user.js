@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.4.7
+// @version      0.4.8
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -61,9 +61,27 @@
     return next && /Battle Statistics/i.test(clean(next.querySelector('.panel__title'))) ? next : null;
   }
   function parseSpecialRewards(text) {
-    return [...new Set(Array.from(text.matchAll(/SPECIAL REWARD:\s*(\+\s*[\d,]+(?:\.\d+)?\s*(?:Explore\s+Turns|Points?|Energy|Scraps?|Intelligence)\b|[^\n]+)/g), match => match[1].trim()))];
+    return uniqueRewards([
+      ...Array.from(text.matchAll(/SPECIAL REWARD:\s*(\+\s*[\d,]+(?:\.\d+)?\s*(?:Explore\s+Turns|Points?|Energy|Scraps?|Intelligence)\b|[^\n]+)/g), match => match[1].trim()),
+      // Recover the supplied Lucky Break banner from older saved text too.
+      ...Array.from(text.matchAll(/Lucky Break!\s*Bonus reward received\.\s*(\+?\s*\d[^\n]*)/gi), match => match[1].trim())
+    ]);
   }
-  function specialRewards(node) { return parseSpecialRewards(passiveText(node)); }
+  function uniqueRewards(values) {
+    const found=new Map();
+    for (const value of values) {
+      const label=value.replace(/\s+/g,' ').trim();
+      const key=label.replace(/^\+\s*/,'').toLowerCase();
+      if (key && !found.has(key)) found.set(key,label);
+    }
+    return [...found.values()];
+  }
+  function specialRewards(node) {
+    return uniqueRewards([
+      ...Array.from(node.querySelectorAll('.reward-banner .reward-label'),clean),
+      ...parseSpecialRewards(passiveText(node))
+    ]);
+  }
   function rewardScope(node) {
     return node.closest('main') || node.parentElement || node;
   }
@@ -211,7 +229,7 @@
     const now = new Date().toISOString();
     const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.4.7', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.4.8', id: crypto.randomUUID(),
       firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -233,6 +251,9 @@
     const reports = Array.from(root.querySelectorAll('.arena-report, .st-hit'));
     if (root.matches?.('.arena-report, .st-hit')) reports.push(root);
     reports.forEach(report => {
+      // A replaced result has already been archived with its sibling rewards
+      // and stats. Don't overwrite it with a now-detached, incomplete view.
+      if (!report.isConnected && known.has(report)) return;
       if (report.matches('.arena-report') && report.querySelector('.combat-log-line')) save(report, arena(report));
       else if (report.matches('.st-hit') && clean(report.querySelector('.st-hit__line, .st-hit__cash'))) save(report, streets(report));
     });
