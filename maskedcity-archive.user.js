@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.4.8
+// @version      0.5.0
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
-// @description  Automatically preserve Arena, Streets, and pet feeding results; export JSON or offline HTML.
+// @description  Automatically preserve Arena, Streets, Hollow fights, and pet feeding results; export JSON or offline HTML.
 // @match        https://maskedcity.com/*
 // @match        https://www.maskedcity.com/*
 // @exclude      https://maskedcity.com/wiki*
@@ -26,6 +26,7 @@
   const PREFIX = 'mc-event-v1:';
   const known = new WeakMap();
   const petAlerts = new WeakMap();
+  const hollowFights = new WeakMap();
   const PET_RESULT_SELECTOR = '.alert, #petFeedMsg';
   const SERVER_TIME_ZONE = 'America/Los_Angeles';
   const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
@@ -142,6 +143,63 @@
       snapshotHtml: sections.map(snapshot).join('')
     };
   }
+  function shown(node) {
+    if (!node) return false;
+    for (let el=node; el; el=el.parentElement) {
+      if (el.hidden || el.getAttribute('aria-hidden')==='true' || el.style.display==='none' || el.style.visibility==='hidden') return false;
+    }
+    return true;
+  }
+  function hollow(panel) {
+    const pick=selector=>panel.querySelector(selector);
+    const opponent=clean(pick('#hlFightName')), outcome=clean(pick('#hlFightResult'));
+    const hero=pick('#hlFightHero'), meta=pick('#hlFightMeta');
+    if (!shown(hero) || !shown(pick('#hlFightResult')) || !opponent || !/\b(VICTORY|DEFEAT|DRAW|WON|LOST)\b/i.test(outcome) || !clean(meta)) return null;
+    const rows=Array.from(panel.querySelectorAll('#hlFightRewards .hlf-reward')).filter(shown);
+    const read=(id,label)=>{
+      const row=rows.find(el=>el.id===id), value=clean(row?.querySelector('b'));
+      return value ? {label,value} : null;
+    };
+    const currencies=[['hlRwEcto','Ectoplasm'],['hlRwGold','Gold'],['hlRwCash','Cash'],['hlRwScraps','Scraps']].map(([id,label])=>read(id,label)).filter(Boolean);
+    const statGains=[['hlRwSpeed','Speed'],['hlRwPower','Power'],['hlRwStrength','Strength']].map(([id,label])=>read(id,label)).filter(Boolean)
+      .map(row=>({...row,stat:row.label.toLowerCase(),amount:Number(row.value.replace(/[^\d.+-]/g,''))})).filter(row=>Number.isFinite(row.amount));
+    // More than one visible stat row is an intermediate render, not evidence
+    // that this one fight awarded several stats. Wait for its completed shape.
+    if (statGains.length>1) return null;
+    const equipmentExperience=rows.filter(el=>el.classList.contains('hlf-reward--gear')).map(el=>({label:clean(el.querySelector('span')),value:clean(el.querySelector('b')),leveledUp:el.classList.contains('is-up')})).filter(row=>row.label && row.value);
+    const itemDrops=rows.filter(el=>el.classList.contains('hlf-reward--loot')).map(el=>({label:clean(el.querySelector('span')) || 'Pawn item',value:clean(el.querySelector('b'))})).filter(row=>row.label!=='Pawn item' || row.value);
+    const dialogue=pick('#hlFightDialogue');
+    const levelUps=[...new Set([
+      ...equipmentExperience.filter(row=>row.leveledUp).map(row=>`${row.label} — ${row.value}`),
+      ...[outcome,clean(meta),...rows.filter(el=>!el.classList.contains('is-up')).map(clean),...(shown(dialogue)?[passiveText(dialogue)]:[])]
+        .flatMap(text=>text.split('\n')).filter(text=>/\b(?:leve(?:lled|led)\s+up|level[ -]?up|gained\s+(?:a\s+|\d+\s+)?levels?|reached\s+level)\b/i.test(text))
+    ])];
+    const health=clean(meta).match(/([\d,]+(?:\.\d+)?)\s*(?:health|HP)\s*(?:left|remaining)/i);
+    const turns=clean(meta).match(/(\d+)\s*turns?/i);
+    const selected=[pick('#hlFightName'),pick('#hlFightResult'),meta,...rows,...(shown(dialogue)&&levelUps.length?[dialogue]:[])].filter(Boolean);
+    return {
+      type:'hollow',title:opponent,opponent,outcome,
+      experience:read('hlRwExp','Experience')?.value || '',reputation:read('hlRwRep','Reputation')?.value || '',
+      equipmentExperience,statGains,currencies,itemDrops,levelUps,
+      remainingHealth:health?.[1] || '',turns:turns?.[1] || '',
+      text:selected.map(passiveText).join('\n\n'),snapshotHtml:selected.map(snapshot).join('')
+    };
+  }
+  function captureHollow(panel, freshResult = false) {
+    let state=hollowFights.get(panel);
+    if ((!panel.isConnected && state) || !shown(panel)) return;
+    const payload=hollow(panel);
+    if (!payload) {
+      if (state) state.awaiting=true;
+      return;
+    }
+    const appendedLevel=state && payload.opponent===state.opponent && payload.remainingHealth===state.health
+      && payload.outcome!==state.outcome && payload.outcome.startsWith(state.outcome) && payload.levelUps.length;
+    if (!state || state.awaiting || (freshResult && !appendedLevel)) state={token:{},awaiting:false};
+    Object.assign(state,{opponent:payload.opponent,health:payload.remainingHealth,outcome:payload.outcome});
+    hollowFights.set(panel,state);
+    save(state.token,payload);
+  }
   function capturePetMeal(alert, changed = false) {
     const petId = location.pathname.match(/^\/pets\/(\d+)\/?$/)?.[1];
     if (!petId) return;
@@ -216,7 +274,7 @@
     return {...parts,timeZone:SERVER_TIME_ZONE,source};
   }
   function indicate(message) {
-    const text = message || (error ? `Save failed: ${error}` : 'Recorder ready · Arena + Streets + Pet meals automatic');
+    const text = message || (error ? `Save failed: ${error}` : 'Recorder ready · Arena + Streets + Hollow + Pet meals automatic');
     if (status && status.textContent !== text) status.textContent = text;
   }
   function save(node, payload, forceNew = false) {
@@ -229,7 +287,7 @@
     const now = new Date().toISOString();
     const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.4.8', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.5.0', id: crypto.randomUUID(),
       firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -257,6 +315,9 @@
       if (report.matches('.arena-report') && report.querySelector('.combat-log-line')) save(report, arena(report));
       else if (report.matches('.st-hit') && clean(report.querySelector('.st-hit__line, .st-hit__cash'))) save(report, streets(report));
     });
+    const hollowPanels=Array.from(root.querySelectorAll('#hlFight'));
+    if (root.matches?.('#hlFight')) hollowPanels.push(root);
+    hollowPanels.forEach(panel=>captureHollow(panel));
     if (/^\/pets\/\d+\/?$/.test(location.pathname)) {
       const alerts = Array.from(root.querySelectorAll(PET_RESULT_SELECTOR));
       if (root.matches?.(PET_RESULT_SELECTOR)) alerts.push(root);
@@ -300,6 +361,16 @@
   const section = (title, body) => body ? `<section class="event-section"><h3>${escape(title)}</h3>${body}</section>` : '';
   const paragraph = text => text ? `<p>${escape(text)}</p>` : '';
   function eventBody(current) {
+    if (current.type==='hollow') return section('Result',pairs([
+      {label:'Opponent',value:current.opponent},{label:'Outcome',value:current.outcome},
+      {label:'Remaining health',value:current.remainingHealth || 'Not shown'}
+    ])) + section('Experience · Reputation',pairs([
+      ...(current.experience?[{label:'Experience',value:current.experience}]:[]),
+      ...(current.reputation?[{label:'Reputation',value:current.reputation}]:[])
+    ])) + section('Equipment experience',pairs(current.equipmentExperience))
+      + section('Stat gained',pairs(current.statGains)) + section('Currency drops',pairs(current.currencies))
+      + section('Item drops',pairs(current.itemDrops))
+      + section('Level-ups',current.levelUps?.map(paragraph).join(''));
     if (current.type === 'pet-feeding') return paragraph(current.mealText)
       + (current.notices || current.levelUps || []).map(line => `<p class="pet-level-up">${escape(line)}</p>`).join('');
     if (current.type === 'streets') {
@@ -341,8 +412,11 @@
   }
   function eventMarkup(record, editable = false) {
     const latest = record.revisions.at(-1);
-    const rewards = latest.specialRewards?.length ? latest.specialRewards : parseSpecialRewards(latest.text || '');
-    return `<details class="event" data-id="${escape(record.id)}"><summary><span>${escape(formatTime(record.firstObservedAt, record.firstServerTime))} - ${escape(latest.title)}</span>${rewards.length ? `<span class="special-reward" title="SPECIAL REWARD">${escape(rewards.join(' · '))}</span>` : ''}</summary><div class="event-content"><div class="event-meta-row"><p class="metadata">${escape(record.source.path)} · ${escape(record.captureMethod)} · ${record.revisions.length} revision(s)</p>${editable ? deleteControl(record) : ''}</div>${eventBody(latest)}`
+    const isHollow=latest.type==='hollow';
+    const rewards = isHollow ? latest.levelUps || [] : latest.specialRewards?.length ? latest.specialRewards : parseSpecialRewards(latest.text || '');
+    const ecto=latest.currencies?.find(row=>row.label==='Ectoplasm')?.value || '0';
+    const title=isHollow ? `${latest.opponent} - ${ecto} Ecto - ${latest.statGains?.map(row=>`${row.value} ${row.label}`).join(' · ') || 'No stat gain'}` : latest.title;
+    return `<details class="event" data-id="${escape(record.id)}"><summary><span>${escape(formatTime(record.firstObservedAt, record.firstServerTime))} - ${escape(title)}</span>${rewards.length ? `<span class="special-reward" title="${isHollow?'Level-ups':'SPECIAL REWARD'}">${escape(rewards.join(' · '))}</span>` : ''}</summary><div class="event-content"><div class="event-meta-row"><p class="metadata">${escape(record.source.path)} · ${escape(record.captureMethod)} · ${record.revisions.length} revision(s)</p>${editable ? deleteControl(record) : ''}</div>${eventBody(latest)}`
       + (record.revisions.length > 1 ? `<details class="revisions"><summary>Earlier observations (${record.revisions.length - 1})</summary>${record.revisions.slice(0,-1).map(r => `<section><h3>${escape(formatTime(r.observedAt, r.serverTime))}</h3>${eventBody(r)}</section>`).join('')}</details>` : '')
       + '</div></details>';
   }
@@ -350,6 +424,7 @@
     const groups = [
       {type:'streets', label:'STREETS', events:[]},
       {type:'arena', label:'FIGHTS', events:[]},
+      {type:'hollow', label:'THE HOLLOW', events:[]},
       {type:'other', label:'OTHER', events:[]}
     ];
     const pets = new Map();
@@ -361,18 +436,23 @@
         pets.get(meal.petId).events.push(record);
         continue;
       }
-      (groups.find(group => group.type === type) || groups[2]).events.push(record);
+      (groups.find(group => group.type === type) || groups[3]).events.push(record);
     }
-    const groupMarkup = group => `<details class="event-group" data-type="${group.type}"><summary>${group.label}</summary><div class="group-events">${group.events.map(record=>eventMarkup(record,editable)).join('') || '<p class="metadata">No events saved yet.</p>'}</div></details>`;
+    const hollowTotals={speed:0,power:0,strength:0};
+    for (const record of groups[2].events) for (const gain of record.revisions.at(-1).statGains || []) {
+      if (Object.hasOwn(hollowTotals,gain.stat) && Number.isFinite(gain.amount)) hollowTotals[gain.stat]=Math.round((hollowTotals[gain.stat]+gain.amount)*1e9)/1e9;
+    }
+    const hollowHeading=`<span class="hollow-heading"><b>THE HOLLOW</b>${[['speed','Spd'],['power','Pow'],['strength','Str']].map(([stat,label])=>`<span class="hollow-total ${stat}" data-stat="${stat}" title="Stat gains in retained Hollow fight records">${label}: ${hollowTotals[stat]>=0?'+':''}${hollowTotals[stat]}</span>`).join('')}</span>`;
+    const groupMarkup = group => `<details class="event-group" data-type="${group.type}"><summary>${group.type==='hollow'?hollowHeading:group.label}</summary><div class="group-events">${group.events.map(record=>eventMarkup(record,editable)).join('') || '<p class="metadata">No events saved yet.</p>'}</div></details>`;
     const petMarkup = pets.size ? `<div class="pet-row" aria-label="Pet meal histories">${Array.from(pets, ([id, pet]) => `<details class="event-group pet-group" data-type="pet:${escape(id)}"><summary>${escape(pet.name)}</summary><div class="pet-meals">${pet.events.map(record => {
       const meal = record.revisions.at(-1);
       return `<div class="pet-meal" data-id="${escape(record.id)}"><div class="pet-meal-heading"><p>${escape(meal.mealText)}</p><time class="pet-time" datetime="${escape(record.firstObservedAt)}" title="${escape(formatTime(record.firstObservedAt, record.firstServerTime))}">${escape(formatMealTime(record.firstObservedAt, record.firstServerTime))}</time>${editable ? deleteControl(record) : ''}</div>${(meal.notices || meal.levelUps || []).map(line => `<p class="pet-level-up">${escape(line)}</p>`).join('')}</div>`;
     }).join('')}</div></details>`).join('')}</div>` : '';
-    return groups.slice(0,2).map(groupMarkup).join('') + petMarkup + (groups[2].events.length ? groupMarkup(groups[2]) : '');
+    return groups.slice(0,3).map(groupMarkup).join('') + petMarkup + (groups[3].events.length ? groupMarkup(groups[3]) : '');
   }
   const petCss = `.pet-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;margin:8px 0}.pet-group{flex:0 0 calc((100% - 16px)/3);min-width:0}.pet-group>summary{overflow-wrap:anywhere}.pet-meals{padding:0 10px}.pet-meal{padding:10px 0;border-bottom:1px solid #40566b;overflow-wrap:anywhere}.pet-meal:last-child{border-bottom:0}.pet-meal p{margin:4px 0;line-height:1.6}.pet-meal-heading{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px 8px}.pet-meal-heading p{flex:1 1 120px}.pet-time{font:11px ui-monospace,monospace;color:#9db0c4;font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}.pet-level-up{border-top:1px solid #536b82;padding-top:8px;color:#ffd780}@media(max-width:600px){.pet-row{gap:4px}.pet-group{flex-basis:calc((100% - 8px)/3)}.pet-group>summary{padding:10px 4px;font-size:13px}.pet-meals{padding:0 6px}.pet-meal{font-size:12px}}`;
-  const groupCss = `.event-group{margin-bottom:4px;border:1px solid #536b82;border-radius:6px;background:#142231;overflow:hidden}.event-group>summary{list-style:none;text-align:center;font-size:16px;font-weight:bold;letter-spacing:.05em;padding:12px 14px;cursor:pointer;border-radius:5px;background:#1c3043;transition:background-color .15s ease}.event-group>summary::-webkit-details-marker{display:none}.event-group>summary::after{content:' ▸';color:#aaceec}.event-group[open]>summary::after{content:' ▾'}.event-group>summary:hover,.event>summary:hover{background:#29445c}.event-group[open]>summary{border-bottom:1px solid #40566b;border-radius:5px 5px 0 0}.group-events{padding:0 10px}.event>summary{border-radius:5px;transition:background-color .15s ease}`;
-  const contentCss = `*{box-sizing:border-box}.event{border:1px solid #536b82;border-radius:6px;margin:10px 0;background:#142231}.event>summary{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px;cursor:pointer;list-style:none;font-weight:650}.event>summary::-webkit-details-marker{display:none}.event>summary>span:first-child{min-width:0;overflow-wrap:anywhere}.event>summary>span:first-child::before{content:'▸ ';color:#9cbedb}.event[open]>summary>span:first-child::before{content:'▾ '}.event[open]>summary{border-bottom:1px solid #40566b}.special-reward{color:#ffd780;flex-shrink:0;text-align:right}.event-content{padding:4px 18px 18px}.event-section{margin-top:20px}.event-section h3{font-size:15px;color:#aaceec;margin:0 0 8px}.event-section p{margin:6px 0;line-height:1.6}.metadata{color:#9db0c4;font-size:12px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px;color:inherit}th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #30475c;vertical-align:top}th{color:#aaceec}td:not(:first-child){white-space:nowrap}.fight-log p{padding:6px 0;border-bottom:1px solid #30475c}.revisions{margin-top:20px}.revisions>summary{cursor:pointer;color:#aaceec}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.6 system-ui}summary:focus-visible,button:focus-visible{outline:2px solid #ffd780;outline-offset:2px}@media(max-width:600px){.event>summary{gap:10px;font-size:12px}.special-reward{max-width:40%;white-space:normal}.event-content{padding:4px 10px 12px}}`;
+  const groupCss = `.hollow-heading{display:inline-flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px 16px}.hollow-heading b{letter-spacing:.1em}.hollow-total{font-size:13px;letter-spacing:0;font-variant-numeric:tabular-nums}.hollow-total.speed{color:#76acff}.hollow-total.power{color:#ff8088}.hollow-total.strength{color:#73dc96}.event-group{margin-bottom:4px;border:1px solid #536b82;border-radius:6px;background:#142231;overflow:hidden}.event-group>summary{list-style:none;text-align:center;font-size:16px;font-weight:bold;letter-spacing:.05em;padding:12px 14px;cursor:pointer;border-radius:5px;background:#1c3043;transition:background-color .15s ease}.event-group>summary::-webkit-details-marker{display:none}.event-group>summary::after{content:' ▸';color:#aaceec}.event-group[open]>summary::after{content:' ▾'}.event-group>summary:hover,.event>summary:hover{background:#29445c}.event-group[open]>summary{border-bottom:1px solid #40566b;border-radius:5px 5px 0 0}.group-events{padding:0 10px}.event>summary{border-radius:5px;transition:background-color .15s ease}`;
+  const contentCss = `*{box-sizing:border-box}.event{border:1px solid #536b82;border-radius:6px;margin:10px 0;background:#142231}.event>summary{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px;cursor:pointer;list-style:none;font-weight:650}.event>summary::-webkit-details-marker{display:none}.event>summary>span:first-child{min-width:0;overflow-wrap:anywhere}.event>summary>span:first-child::before{content:'▸ ';color:#9cbedb}.event[open]>summary>span:first-child::before{content:'▾ '}.event[open]>summary{border-bottom:1px solid #40566b}.special-reward{max-width:50%;overflow-wrap:anywhere;color:#ffd780;flex-shrink:0;text-align:right}.event-content{padding:4px 18px 18px}.event-section{margin-top:20px}.event-section h3{font-size:15px;color:#aaceec;margin:0 0 8px}.event-section p{margin:6px 0;line-height:1.6}.metadata{color:#9db0c4;font-size:12px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px;color:inherit}th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #30475c;vertical-align:top}th{color:#aaceec}td:not(:first-child){white-space:nowrap}.fight-log p{padding:6px 0;border-bottom:1px solid #30475c}.revisions{margin-top:20px}.revisions>summary{cursor:pointer;color:#aaceec}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.6 system-ui}summary:focus-visible,button:focus-visible{outline:2px solid #ffd780;outline-offset:2px}@media(max-width:600px){.event>summary{gap:10px;font-size:12px}.special-reward{max-width:40%;white-space:normal}.event-content{padding:4px 10px 12px}}`;
   function exportHtml() {
     const sections = groupedEvents(records());
     download(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>MaskedCity Event Archive</title><style>body{max-width:1180px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#e8edf3;background:#111820}${contentCss}${groupCss}${petCss}</style><h1>MaskedCity Event Archive</h1><p>Recorded browser observations. All displayed times use MaskedCity server time (Pacific); JSON also retains UTC observation times.</p>${sections || '<p>No events saved.</p>'}</html>`, 'text/html', 'html');
@@ -428,12 +508,19 @@
     // Process changed feeding alerts once per delivery before generic scans.
     // Identical text rewritten into the same alert still represents a new meal.
     const changedAlerts = new Set();
+    const changedHollow = new Map();
     for (const mutation of mutations) {
       const element = mutation.target.nodeType === 1 ? mutation.target : mutation.target.parentElement;
       const alert = element?.closest?.(PET_RESULT_SELECTOR);
-      if (alert && petAlerts.has(alert)) changedAlerts.add(alert);
+      if (mutation.type!=='attributes' && alert && petAlerts.has(alert)) changedAlerts.add(alert);
+      const panel=element?.closest?.('#hlFight');
+      if (panel) {
+        const resultWritten=mutation.type!=='attributes' && (element.closest?.('#hlFightResult') || Array.from(mutation.addedNodes).some(node=>node.nodeType===1 && (node.id==='hlFightResult' || node.querySelector('#hlFightResult'))));
+        changedHollow.set(panel,changedHollow.get(panel) || Boolean(resultWritten));
+      }
     }
     changedAlerts.forEach(alert => capturePetMeal(alert, true));
+    changedHollow.forEach((fresh,panel)=>captureHollow(panel,fresh && hollowFights.has(panel)));
     // Include detached reports: a panel inserted and removed in a single task
     // can still be captured from the mutation record's retained node.
     for (const mutation of mutations) {
@@ -444,7 +531,7 @@
     }
     scan(); mount();
   });
-  observer.observe(document, {subtree:true, childList:true, characterData:true});
+  observer.observe(document, {subtree:true, childList:true, characterData:true,attributes:true,attributeFilter:['hidden','aria-hidden','class']});
   document.addEventListener('DOMContentLoaded', () => { scan(); mount(); }, {once:true});
   window.addEventListener('pageshow', () => { scan(); mount(); });
   document.addEventListener('click', () => scan(), true);

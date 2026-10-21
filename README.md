@@ -10,6 +10,7 @@ Arena fight reports and Working the Streets results can disappear when you navig
 
 - **Arena:** opponent/report title, outcome, combat log, rewards, and battle statistics.
 - **Streets:** result story, cash, EXP, reputation, street progression, witnesses, alliance gains, bonus breakdown, momentum, boosts, and street level.
+- **The Hollow:** opponent, remaining health, experience, reputation, equipment experience/level-ups, the fight's stat gain, currency drops, and pawn-item drops. Hidden stale reward fields and resource-find panels are excluded.
 - **Pet feeding:** individual meals on `/pets/<id>`, including food, displayed EXP/life gains, and any notice appended to the feeding result, such as a level-up.
 - **Special rewards:** labels inside `.reward-banner .reward-label` (including Streets' Lucky Break rewards), plus the older `SPECIAL REWARD:` format. Points, Explore Turns, Energy, Scraps, Intelligence, and other banner labels are captured without depending on icons or emoji.
 - **Manual capture:** save the current main game container for other events that do not yet have an automatic detector.
@@ -43,7 +44,7 @@ If your manager reports that browser permission or a userscript setting is requi
 
 ## Using the archive
 
-**Arena, Streets, and pet meals capture automatically.** Perform your normal game actions; you do not need to press Capture page for supported results.
+**Arena, Streets, Hollow fights, and pet meals capture automatically.** Perform your normal game actions; you do not need to press Capture page for supported results.
 
 | Control | Function |
 | --- | --- |
@@ -65,6 +66,12 @@ Event headings show the observation time and event name on the left, with specia
 Streets rewards are captured as soon as the result appears, including banners added after the initial result. Performing the next action can replace the live result, but the prior record retains its reward. If an older saved record includes the supplied `Lucky Break! Bonus reward received.` banner text followed by its amount, its header can display that reward too. Missing content that was never saved cannot be recovered. Duplicate labels expressed in both the banner and old prefix format are shown once.
 
 Events are organized into **STREETS** and **FIGHTS** disclosures, initially collapsed. Expand a type to browse its events, then expand an event to read its sections. Manual captures and any other event types appear under **OTHER** when present. Group headings have centered labels, right/down disclosure arrows, rounded corners, and lighter hover backgrounds. Refresh preserves both group and event expansion states. HTML exports use the same grouping.
+
+**THE HOLLOW** has its own disclosure, separate from Arena fights. Its heading shows color-coded **Spd**, **Pow**, and **Str** totals from the retained Hollow fight records. Each fight contributes its latest recorded direct stat award once; earlier revisions and equipment-level bonuses do not add to those totals. Deleting or restoring a fight updates the totals. There is no cumulative ectoplasm total.
+
+Hollow event headings read `timestamp - opponent - ectoplasm - stat gain`, with equipment level-up notices on the right. Expanded records show only the result, remaining health, EXP/reputation, equipment progress, direct stat gain, currency, and item drops, plus any level-up notices. The running combat log, dungeon map, and unrelated page content are not recorded. Equipment rows marked `is-up`, such as `Grave Digger — Lv 20! +11 ATK +7 POW +5 STR`, are recognized as level-ups. Hollow records do not use the Arena/Streets special-reward parser.
+
+The native Hollow result panel is reused. Capture distinguishes completed fights from encounters, empty entry states, and finds such as Scraps, even when the latter retain hidden `VICTORY`/reward text. Only active reward rows in the visible completed fight count. Consecutive rewrites of the result marker identify new observations, including identical opponents and rewards; later reward/detail changes update the same observation. As with other record types, reloading a still-visible result can create another observation.
 
 Pet feeding histories appear in a compact row with three equal-width slots. Each recorded pet has a disclosure headed by its name; expanding it shows meals newest first, with appended notices on a separate divided line. Only pets with captured meals appear. Histories are grouped by the individual pet ID, so shared names do not merge pets. The archive retains historical pets and wraps additional histories onto another row rather than deleting them. Each meal displays a small, fixed-length server-time timestamp in `HHmm-DD-MM` format, such as `0902-17-10`. Hover over the timestamp for the full date and time, including the year. Pet histories are included in both export formats.
 
@@ -97,7 +104,7 @@ There is no automatic expiry or deletion. Removing script data, uninstalling the
 ## Limitations
 
 - Capture starts after the script loads. It cannot recover results that have already disappeared.
-- Automatic detection currently supports the supplied Arena, Streets, and pet-feeding layouts. Other layouts may require manual capture or a detector update.
+- Automatic detection currently supports the supplied Arena, Streets, Hollow fight, and pet-feeding layouts. Other layouts may require manual capture or a detector update.
 - The archive preserves observed content; it does not restore the original game page through browser Back/Forward navigation.
 - Timestamps describe when your browser observed a result, not an authoritative server event time.
 - Changes to a result container are saved as revisions. Reloading a result may create another observation of the same event; a reused container may hold multiple results as revisions.
