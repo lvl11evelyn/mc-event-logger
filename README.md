@@ -50,7 +50,7 @@ If your manager reports that browser permission or a userscript setting is requi
 | --- | --- |
 | **Review** | Toggle the archive open or closed; expand an event heading to read its sections. |
 | **Capture page** | Manually save the main game content while an event is still visible. |
-| **Refresh** | Reload the archive list, including records saved by other tabs. |
+| **Refresh** | Reload docked and popped-out sections, including records saved by other tabs. |
 | **Export JSON** | Download structured events and their saved revisions. |
 | **Export HTML** | Download a standalone, readable archive with collapsible events. |
 | **Close** | Dismiss the archive panel. |
@@ -81,9 +81,24 @@ The current one-tap feeding UI is supported through its live `#petFeedMsg` resul
 
 Level-ups also use a distinct result format, such as `Cydaea ate Brawler Brunch and leveled up to Level 17! (+1 treat)`. The logger records the meal with the level/treat notice on a separate line before the game's delayed reload. This message omits EXP/life gains from the DOM; the logger leaves those values absent rather than guessing them from the food card or intercepting network traffic. The complete result text remains in the JSON record.
 
-The panel expands with your viewport, up to 1,500 pixels tall and 1,180 pixels wide. Clicking outside it closes it while allowing that click to reach the game beneath it, including a visible **Fight Again** button. You can also close it with **Escape**. Opening the archive does not block the surrounding page.
+**Review** and **Capture page** float separately at the lower left, fully opaque at all times, with no shared backing panel or hover fade. Buttons use the site's `--font-ui` family at 13px.
 
-The lower-left control block's background, border, text, and Review button are fully transparent while idle. Hovering or keyboard focus reveals them over 0.1 seconds with no delay. After leaving, it waits 0.25 seconds and disappears over 0.2 seconds. **Capture page stays fully opaque and clickable throughout.** Buttons use the site's `--font-ui` family at 13px. Reduced bottom padding and a status message positioned above the block keep the capture button close to the footer's bottom edge. A mouse click does not leave the block permanently visible after the pointer moves away. Reduced-motion preferences disable these transitions.
+The main panel opens directly above the buttons and grows upward only as much as its contents need. It is up to 1,180 pixels wide. Once its contents fill the available viewport height, the event area scrolls instead of extending beyond the top edge. The buttons remain outside the panel's bounds and accessible at every size. Clicking outside the archive closes the main panel while letting that click reach the game beneath it, including a visible **Fight Again** button. **Escape** closes the main panel too. Neither action hides popped-out sections.
+
+### Floating sections
+
+Each category and each pet history has a popout toggle in its header's upper-left corner:
+
+1. Click **↗** to detach that section into a floating window. Its expanded entries remain expanded.
+2. Click the header normally to expand or collapse the section. Click and drag the header to move the window; dragging does not toggle it.
+3. When expanded, drag either lower corner to resize the window's width and height. Long content scrolls inside the resized window. Focus a corner and use arrow keys for 10-pixel adjustments, or Shift plus arrow keys for 40-pixel adjustments.
+4. Click **↙** to return the section to its original location in the main panel. Docking it while the main panel is closed does not reopen the panel.
+
+Section headers stay on one line, and each popout’s minimum width is measured from its full header so resizing cannot clip its text. Popouts are available at viewport widths of 768 px and above, provided the header fits. Below 768 px the popout controls are hidden; existing popouts automatically dock without opening a hidden main panel.
+
+Popouts remain visible and usable when the main panel closes, and their bounds are kept within the available viewport above the floating buttons. Several sections can float at once; interacting with one brings it forward. New captures update open sections, including popouts. Refresh preserves expanded entries, section state, window position, size, and scroll position where possible. Delete and Undo also update the relevant sections without reopening a hidden main panel.
+
+Window layout is kept for the current page. Reloading or navigating starts with docked sections; saved event records remain in userscript storage. If the final meal in a popped-out pet history is deleted, that empty window is removed. Undo restores its record as a docked history. HTML exports remain standalone collapsible archives without dragging, docking, resizing, or delete controls.
 
 ## Updates
 

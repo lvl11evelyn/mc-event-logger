@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.5.0
+// @version      0.6.0
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -32,6 +32,8 @@
   const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
   let host, shadow, status, error = '';
   let lastDeleted = null;
+  const popouts = new Map();
+  let popoutLayer=10, gesture=null, renderPending=false, renderQueued=false;
   const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
   const clean = node => (node?.textContent || '').replace(/\s+/g, ' ').trim();
   // Construct a passive snapshot from an allowlist. Never copy attributes,
@@ -287,7 +289,7 @@
     const now = new Date().toISOString();
     const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.5.0', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.6.0', id: crypto.randomUUID(),
       firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -299,6 +301,7 @@
       known.set(node, {record, fingerprint});
       error = '';
       indicate(`Saved ${payload.title}${payload.lines ? ` · ${payload.lines.length} log lines` : ''}`);
+      if (shadow && (popouts.size || shadow.querySelector('dialog').open)) scheduleRender();
     } catch (failure) {
       error = String(failure.message || failure); indicate();
       console.error('MaskedCity archive save failed', failure);
@@ -400,14 +403,14 @@
       // keeps only the latest deleted record in memory until this page closes.
       GM_setValue(PREFIX+id,{id,deleted:true});
       lastDeleted=record;
-      review(); indicate('Record deleted · Undo is available in the panel.');
+      renderArchive(); indicate('Record deleted · Undo is available in the panel.');
     } catch(failure) { indicate(`Delete failed: ${failure.message || failure}`); }
   }
   function undoDelete() {
     if (!lastDeleted) return;
     try {
       GM_setValue(PREFIX+lastDeleted.id,lastDeleted);
-      lastDeleted=null; review(); indicate('Record restored.');
+      lastDeleted=null; renderArchive(); indicate('Record restored.');
     } catch(failure) { indicate(`Restore failed: ${failure.message || failure}`); }
   }
   function eventMarkup(record, editable = false) {
@@ -457,27 +460,215 @@
     const sections = groupedEvents(records());
     download(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>MaskedCity Event Archive</title><style>body{max-width:1180px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#e8edf3;background:#111820}${contentCss}${groupCss}${petCss}</style><h1>MaskedCity Event Archive</h1><p>Recorded browser observations. All displayed times use MaskedCity server time (Pacific); JSON also retains UTC observation times.</p>${sections || '<p>No events saved.</p>'}</html>`, 'text/html', 'html');
   }
-  function review() {
-    const dialog = shadow.querySelector('dialog');
+  function scheduleRender() {
+    if (renderQueued) return;
+    renderQueued=true;
+    queueMicrotask(()=>{
+      renderQueued=false;
+      if (gesture) renderPending=true;
+      else renderArchive();
+    });
+  }
+  function sectionLabel(group) {
+    const type=group.dataset.type;
+    return ({streets:'STREETS',arena:'FIGHTS',hollow:'THE HOLLOW',other:'OTHER'})[type]
+      || group.querySelector(':scope > summary .section-label')?.textContent.trim()
+      || group.querySelector(':scope > summary').textContent.trim();
+  }
+  function decorateGroup(group) {
+    const summary=group.querySelector(':scope > summary');
+    if (!summary.querySelector('.section-label')) {
+      const label=document.createElement('span');label.className='section-label';
+      label.append(...summary.childNodes);summary.append(label);
+    }
+    if (!summary.querySelector('.popout-toggle')) {
+      const button=document.createElement('button');button.type='button';button.className='popout-toggle';
+      summary.prepend(button);
+    }
+    const popped=group.classList.contains('popped-out');
+    const button=summary.querySelector('.popout-toggle');
+    button.setAttribute('aria-label',`${popped?'Dock':'Pop out'} ${sectionLabel(group)}`);
+    button.setAttribute('aria-pressed',String(popped));button.title=button.getAttribute('aria-label');
+    if (popped) for (const side of ['left','right']) {
+      if (group.querySelector(`:scope > [data-resize="${side}"]`)) continue;
+      const handle=document.createElement('button');handle.type='button';handle.className=`resize-handle resize-${side}`;
+      handle.dataset.resize=side;handle.setAttribute('aria-label',`Resize ${sectionLabel(group)} from lower ${side} corner`);
+      handle.title='Drag to resize; arrow keys also resize';group.append(handle);
+    }
+  }
+  function workspace() {
+    const controls=shadow.querySelector('#controls').getBoundingClientRect();
+    return {left:8,top:8,right:Math.max(9,innerWidth-8),bottom:Math.max(9,controls.top-8)};
+  }
+  // Measure the unwrapped header, including its disclosure and docking controls.
+  function headerMinimum(group) {
+    const probe=document.createElement('details');probe.className='event-group header-probe';
+    probe.append(group.querySelector(':scope > summary').cloneNode(true));
+    shadow.querySelector('#popouts').append(probe);
+    const width=Math.ceil(probe.getBoundingClientRect().width)+2;
+    probe.remove();return Math.max(240,width);
+  }
+  function canPopOut(group) {
+    return innerWidth>=768 && headerMinimum(group)<=workspace().right-workspace().left;
+  }
+  function dockGroup(type,state) {
+    state.placeholder.replaceWith(state.group);popouts.delete(type);
+    state.group.classList.remove('popped-out');state.group.removeAttribute('style');
+    state.group.querySelectorAll(':scope > .resize-handle').forEach(el=>el.remove());
+    decorateGroup(state.group);
+  }
+  function placePopout(group, box) {
+    const area=workspace(),maxWidth=area.right-area.left,maxHeight=area.bottom-area.top;
+    const width=Math.min(maxWidth,Math.max(Math.min(headerMinimum(group),maxWidth),box.width));
+    const height=Math.min(maxHeight,Math.max(Math.min(120,maxHeight),box.height));
+    const left=Math.max(area.left,Math.min(area.right-width,box.left));
+    const top=Math.max(area.top,Math.min(area.bottom-height,box.top));
+    Object.assign(group.style,{left:`${left}px`,top:`${top}px`,width:`${width}px`,height:`${height}px`});
+    const headerHeight=group.querySelector(':scope > summary').getBoundingClientRect().height;
+    group.style.setProperty('--float-body-height',`${Math.max(0,height-headerHeight-2)}px`);
+  }
+  function updateBounds() {
+    if (!shadow) return;
+    const area=workspace();
+    host.style.setProperty('--panel-bottom',`${innerHeight-area.bottom}px`);
+    for (const [type,state] of popouts) if (!canPopOut(state.group)) dockGroup(type,state);
+    shadow.querySelectorAll('.popout-toggle').forEach(button=>{
+      const allowed=canPopOut(button.closest('.event-group'));
+      button.disabled=!allowed;button.hidden=!allowed;
+    });
+    // Docked headers compact to their actual column width without wrapping.
+    shadow.querySelectorAll('.event-group:not(.popped-out)').forEach(group=>{
+      group.style.setProperty('--header-scale','1');
+      const summary=group.querySelector(':scope > summary'),label=summary.querySelector('.section-label');
+      if (!summary.clientWidth || !label) return;
+      let scale=1;
+      for (let i=0;i<3;i++) {
+        const css=getComputedStyle(summary);
+        const available=summary.clientWidth-parseFloat(css.paddingLeft)-parseFloat(css.paddingRight)-parseFloat(css.fontSize)*1.5;
+        const width=label.getBoundingClientRect().width;
+        if (width<=available || available<=0) break;
+        scale*=available/width;group.style.setProperty('--header-scale',String(scale));
+      }
+    });
+    for (const {group} of popouts.values()) placePopout(group,{
+      left:parseFloat(group.style.left),top:parseFloat(group.style.top),
+      width:parseFloat(group.style.width),height:parseFloat(group.style.height)
+    });
+  }
+  function togglePopout(group) {
+    const type=group.dataset.type,existing=popouts.get(type);
+    if (existing) {
+      dockGroup(type,existing);
+    } else {
+      if (!canPopOut(group)) return;
+      const rect=group.getBoundingClientRect(),placeholder=document.createComment(`Dock ${type}`);
+      group.replaceWith(placeholder);group.style.removeProperty('--header-scale');group.classList.add('popped-out');
+      shadow.querySelector('#popouts').append(group);popouts.set(type,{group,placeholder});
+      group.style.zIndex=String(++popoutLayer);
+      placePopout(group,{left:rect.left+24,top:rect.top-24,width:group.classList.contains('pet-group')?420:720,height:Math.max(280,Math.min(560,rect.height))});
+    }
+    decorateGroup(group);updateBounds();
+  }
+  function renderArchive() {
+    if (!shadow) return;
     const list = shadow.querySelector('#events');
     const saved = records();
-    const expanded = new Set(Array.from(list.querySelectorAll('.event[open]'), el => el.dataset.id));
-    const expandedGroups = new Set(Array.from(list.querySelectorAll('.event-group[open]'), el => el.dataset.type));
+    const expanded = new Set(Array.from(shadow.querySelectorAll('.event[open]'), el => el.dataset.id));
+    const expandedGroups = new Set(Array.from(shadow.querySelectorAll('.event-group[open]'), el => el.dataset.type));
+    const listScroll=list.scrollTop;
     list.innerHTML = groupedEvents(saved,true);
+    for (const [type,state] of popouts) {
+      const fresh=Array.from(list.querySelectorAll('.event-group')).find(el=>el.dataset.type===type);
+      if (!fresh) {state.group.remove();popouts.delete(type);continue;}
+      const body=state.group.querySelector(':scope > .group-events, :scope > .pet-meals');
+      const scroll=body?.scrollTop || 0;
+      state.group.replaceChildren(...fresh.childNodes);
+      state.placeholder=document.createComment(`Dock ${type}`);fresh.replaceWith(state.placeholder);
+      const newBody=state.group.querySelector(':scope > .group-events, :scope > .pet-meals');
+      if (newBody) newBody.scrollTop=scroll;
+    }
     shadow.querySelector('#undo').hidden=!lastDeleted;
-    list.querySelectorAll('.event').forEach(el => { el.open = expanded.has(el.dataset.id); });
-    list.querySelectorAll('.event-group').forEach(el => { el.open = expandedGroups.has(el.dataset.type); });
-    if (!dialog.open) dialog.show();
+    shadow.querySelectorAll('.event').forEach(el => { el.open = expanded.has(el.dataset.id); });
+    shadow.querySelectorAll('.event-group').forEach(el => { el.open = expandedGroups.has(el.dataset.type);decorateGroup(el); });
+    list.scrollTop=listScroll;updateBounds();
   }
-  // Fade individual surfaces, never the parent: Capture page stays opaque.
-  // :focus-visible keeps keyboard use bright without sticky mouse-click focus.
-  const controlsCss = `button{font-size:13px;font-family:var(--font-ui)}.event-meta-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.event-meta-row .metadata{min-width:0;overflow-wrap:anywhere}.delete-event{flex:none;width:30px;height:30px;padding:0;margin:6px 0;background:#8f2028;border-color:#db6570;color:#fff;font:24px/1 system-ui;border-radius:4px}.delete-event:hover{background:#bc2935}.pet-meal-heading .delete-event{width:22px;height:22px;margin:0;font-size:18px}#bar{--control-alpha:0;position:relative;padding:8px 8px 0;background:rgb(23 35 50 / var(--control-alpha));border-color:rgb(102 129 156 / var(--control-alpha));color:rgb(237 243 250 / var(--control-alpha));transition:background-color .2s .25s,border-color .2s .25s,color .2s .25s}#status{position:absolute;bottom:100%;left:0;width:360px;max-width:calc(100vw - 24px);pointer-events:none}#review{opacity:var(--control-alpha);transition:opacity .2s .25s}#manual{opacity:1}#bar:hover,#bar:has(:focus-visible){--control-alpha:1;transition-duration:.1s;transition-delay:0s}#bar:hover #review,#bar:has(:focus-visible) #review{transition-duration:.1s;transition-delay:0s}@media(prefers-reduced-motion:reduce){#bar,#review{transition:none!important}}`;
+  function review() {
+    renderArchive();
+    const dialog=shadow.querySelector('dialog');
+    if (!dialog.open) dialog.show();
+    updateBounds();
+  }
+  function resizedBox(base, side, dx, dy) {
+    const area=workspace(),minimum=Math.min(base.minimumWidth,area.right-area.left);
+    const right=base.left+base.width;
+    const width=side==='left'
+      ? Math.max(minimum,Math.min(right-area.left,base.width-dx))
+      : Math.max(minimum,Math.min(area.right-base.left,base.width+dx));
+    return {left:side==='left'?right-width:base.left,top:base.top,width,
+      height:Math.max(Math.min(120,area.bottom-base.top),Math.min(area.bottom-base.top,base.height+dy))};
+  }
+  function installPopoutInteraction() {
+    let suppressedSummary=null;
+    shadow.addEventListener('click',event=>{
+      if (suppressedSummary?.contains(event.target)) {
+        event.preventDefault();event.stopPropagation();suppressedSummary=null;return;
+      }
+      const toggle=event.target.closest('.popout-toggle');
+      if (toggle) {event.preventDefault();event.stopPropagation();togglePopout(toggle.closest('.event-group'));}
+    },true);
+    shadow.addEventListener('pointerdown',event=>{
+      suppressedSummary=null;
+      if (event.button!==0) return;
+      const group=event.target.closest('.popped-out');
+      if (!group) return;
+      group.style.zIndex=String(++popoutLayer);
+      const handle=event.target.closest('.resize-handle');
+      const summary=group.querySelector(':scope > summary');
+      if (!handle && (!summary.contains(event.target) || event.target.closest('button,a,input'))) return;
+      const rect=group.getBoundingClientRect();
+      gesture={group,summary,target:handle || summary,pointerId:event.pointerId,
+        mode:handle?'resize':'drag',side:handle?.dataset.resize,x:event.clientX,y:event.clientY,moved:false,
+        base:{left:rect.left,top:rect.top,width:rect.width,height:parseFloat(group.style.height),minimumWidth:headerMinimum(group)}};
+      gesture.target.setPointerCapture(event.pointerId);
+      if (handle) event.preventDefault();
+    });
+    shadow.addEventListener('pointermove',event=>{
+      if (!gesture || gesture.pointerId!==event.pointerId) return;
+      const dx=event.clientX-gesture.x,dy=event.clientY-gesture.y;
+      if (!gesture.moved && Math.hypot(dx,dy)<5) return;
+      gesture.moved=true;event.preventDefault();
+      placePopout(gesture.group,gesture.mode==='drag'
+        ? {...gesture.base,left:gesture.base.left+dx,top:gesture.base.top+dy}
+        : resizedBox(gesture.base,gesture.side,dx,dy));
+    });
+    const finish=event=>{
+      if (!gesture || gesture.pointerId!==event.pointerId) return;
+      if (gesture.moved && gesture.mode==='drag' && event.type!=='pointercancel') suppressedSummary=gesture.summary;
+      if (gesture.target.hasPointerCapture(event.pointerId)) gesture.target.releasePointerCapture(event.pointerId);
+      gesture=null;
+      if (renderPending) {renderPending=false;scheduleRender();}
+    };
+    shadow.addEventListener('pointerup',finish);shadow.addEventListener('pointercancel',finish);
+    shadow.addEventListener('keydown',event=>{
+      const handle=event.target.closest('.resize-handle');
+      if (!handle || !['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) return;
+      event.preventDefault();const group=handle.closest('.popped-out'),rect=group.getBoundingClientRect(),step=event.shiftKey?40:10;
+      placePopout(group,resizedBox({left:rect.left,top:rect.top,width:rect.width,height:parseFloat(group.style.height),minimumWidth:headerMinimum(group)},handle.dataset.resize,
+        event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0,
+        event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0));
+    });
+    shadow.addEventListener('toggle',event=>{
+      if (event.target.matches?.('.popped-out')) updateBounds();
+    },true);
+  }
+  // Independent controls and dockable section surfaces.
+  const controlsCss = `button{font-size:13px;font-family:var(--font-ui)}.event-meta-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.event-meta-row .metadata{min-width:0;overflow-wrap:anywhere}.delete-event{flex:none;width:30px;height:30px;padding:0;margin:6px 0;background:#8f2028;border-color:#db6570;color:#fff;font:24px/1 system-ui;border-radius:4px}.delete-event:hover{background:#bc2935}.pet-meal-heading .delete-event{width:22px;height:22px;margin:0;font-size:18px}#controls{position:fixed;bottom:6px;left:12px;display:flex;gap:8px;padding:0;border:0;background:transparent;pointer-events:none;z-index:1000000}#controls button{pointer-events:auto;opacity:1;margin:0}#status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}#popouts{pointer-events:none}.event-group>summary{position:relative;padding-left:42px;padding-right:42px;white-space:nowrap;overflow-wrap:normal;font-size:calc(16px * var(--header-scale,1))}.hollow-total{font-size:calc(13px * var(--header-scale,1))}.hollow-heading{flex-wrap:nowrap;white-space:nowrap}.section-label{white-space:nowrap}.header-probe{position:fixed!important;left:-10000px!important;top:0!important;width:max-content!important;max-width:none!important;min-width:0!important;visibility:hidden;pointer-events:none}.popout-toggle[hidden]{display:none}.popout-toggle{position:absolute;left:6px;top:6px;width:24px;height:24px;margin:0;padding:0;display:inline-grid;place-items:center;font-size:16px;letter-spacing:0;cursor:pointer}.popout-toggle::before{content:'↗'}.popped-out>summary>.popout-toggle::before{content:'↙'}.popped-out{position:fixed;margin:0;pointer-events:auto;flex:none;max-width:calc(100vw - 16px);box-shadow:0 6px 24px #0008;isolation:isolate}.popped-out:not([open]){height:auto!important}.popped-out>summary{cursor:grab;touch-action:none;user-select:none}.popped-out>summary:active{cursor:grabbing}.popped-out[open]>.group-events,.popped-out[open]>.pet-meals{max-height:var(--float-body-height);overflow:auto;overscroll-behavior:contain;padding-bottom:20px}.resize-handle{position:absolute;bottom:0;width:18px;height:18px;margin:0;padding:0;border:0;border-radius:0;background:transparent;z-index:2;touch-action:none}.resize-right{right:0;cursor:se-resize}.resize-left{left:0;cursor:sw-resize}.resize-handle::before{content:'';position:absolute;bottom:4px;width:8px;height:8px;border-bottom:2px solid #aaceec}.resize-right::before{right:4px;border-right:2px solid #aaceec}.resize-left::before{left:4px;border-left:2px solid #aaceec}.pet-row:empty{display:none}@media(max-width:767px){.event-group>summary{padding:12px 8px;overflow-x:auto}.popout-toggle{display:none}.hollow-heading{gap:8px;font-size:calc(13px * var(--header-scale,1))}.hollow-total{font-size:calc(11px * var(--header-scale,1))}.pet-group>summary{padding:12px 4px;font-size:calc(13px * var(--header-scale,1))}}`;
   function mount() {
     if (host || !document.body || !allowed()) return;
     host = document.createElement('div');
     host.id = 'maskedcity-event-archive';
     shadow = host.attachShadow({mode:'closed'});
-    shadow.innerHTML = `<style>:host{all:initial;position:fixed;bottom:6px;left:12px;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}#bar{pointer-events:auto;background:#172332;border:1px solid #66819c;border-radius:8px;padding:8px;max-width:360px}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}#status{display:block;padding:4px;overflow-wrap:anywhere}dialog{pointer-events:auto;position:fixed;inset:auto;top:12px;left:12px;margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1180px,calc(100vw - 24px));height:clamp(420px,94dvh,1500px);max-height:min(1500px,calc(100dvh - 24px));padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}${petCss}${controlsCss}</style><div id="bar"><strong>MaskedCity Archive</strong><br><button id="review">Review</button><button id="manual">Capture page</button><span id="status" role="status"></span></div><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="undo" hidden>Undo delete</button><button id="close">Close</button></div><div id="events"></div></dialog>`;
+    shadow.innerHTML = `<style>:host{all:initial;position:fixed;inset:0;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}dialog{pointer-events:auto;position:fixed;inset:auto;left:12px;bottom:var(--panel-bottom,52px);margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1180px,calc(100vw - 24px));height:auto;max-height:calc(100dvh - var(--panel-bottom,52px) - 8px);padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}${petCss}${controlsCss}</style><div id="controls"><button id="review">Review</button><button id="manual">Capture page</button></div><span id="status" role="status"></span><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="undo" hidden>Undo delete</button><button id="close">Close</button></div><div id="events"></div></dialog><div id="popouts"></div>`;
     document.body.append(host);
     shadow.querySelector('#review').onclick = () => {
       const dialog = shadow.querySelector('dialog');
@@ -490,7 +681,7 @@
     shadow.querySelector('#json').onclick = exportJson;
     shadow.querySelector('#html').onclick = exportHtml;
     shadow.querySelector('#undo').onclick = undoDelete;
-    shadow.querySelector('#events').addEventListener('click', event => {
+    shadow.addEventListener('click', event => {
       const button=event.target.closest('button[data-delete-id]');
       if (button) deleteRecord(button.dataset.deleteId);
     });
@@ -500,7 +691,10 @@
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape') shadow.querySelector('dialog').close();
     });
-    indicate();
+    installPopoutInteraction();
+    new ResizeObserver(updateBounds).observe(shadow.querySelector('#controls'));
+    window.addEventListener('resize',updateBounds);
+    updateBounds();indicate();
   }
   const observer = new MutationObserver(mutations => {
     if (!allowed()) { if (host) host.style.display = 'none'; return; }
