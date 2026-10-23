@@ -136,3 +136,9 @@ There is no automatic expiry or deletion. Removing script data, uninstalling the
 **Save failed:** check your userscript manager's storage availability. Export any accessible records before clearing data or reinstalling.
 
 For capture problems, [open an issue](https://github.com/lvl11evelyn/mc-event-logger/issues) describing the event type, browser, manager, and script version. If you include a DOM sample, remove form tokens, credentials, and unrelated private content first.
+
+### Ingredient drops
+
+Version 0.6.1 recognizes the result message `Picked up for the Lab: <item>.` and shows an Ingredients row under Arena Rewards or Streets Take. It preserves the item label and any quantity supplied by the game, without adding an assumed quantity. New captures store `ingredientDrops` in JSON; the panel and HTML export also recover this message from existing saved event text. Version 0.6.2 adds a green (`#6dbf30`) `⨃⁺¹` indicator at the far right of event headers. The superscript is the total ingredient quantity; explicit quantities are summed, and each unquantified item counts as one. Hovering the indicator shows the quantity in plain text. The indicator also appears in HTML exports and is recovered for older saved events.
+
+The supplied October 23 archive confirms Adrenal Extract drops in both newest arena fights. Streets support uses the same result message within the captured result/outcome/context; a different Streets message would require another DOM example.

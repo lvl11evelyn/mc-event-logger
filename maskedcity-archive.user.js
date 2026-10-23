@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.6.0
+// @version      0.6.2
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -88,6 +88,31 @@
   function rewardScope(node) {
     return node.closest('main') || node.parentElement || node;
   }
+  function parseIngredients(text) {
+    // This reward sentence is preserved in older text snapshots as well.
+    // Keep the supplied item label/quantity; do not depend on an item catalog.
+    return uniqueRewards(Array.from((text || '').matchAll(/Picked up for the Lab:[ \t]*([^\r\n]+)/gi),
+      match=>match[1].trim().replace(/\.$/,'').trim()));
+  }
+  function ingredientItems(current) {
+    return uniqueRewards([...(current.ingredientDrops || []),...parseIngredients(current.text)]);
+  }
+  function ingredientIndicator(current) {
+    const count=ingredientItems(current).reduce((total,item)=>{
+      const quantity=item.match(/^\+?([\d,]+)\s*(?:[×x]\s*|\s+)/i)
+        || item.match(/\s+[×x]\s*([\d,]+)$/i);
+      return total+(quantity ? Number(quantity[1].replace(/,/g,'')) : 1);
+    },0);
+    if (!count) return '';
+    const superscript=String(count).replace(/\d/g,digit=>'⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(digit)]);
+    const label=`Ingredients received! Quantity: ${count}`;
+    return `<span class="ingredient-indicator" title="${label}" aria-label="${label}">⨃⁺${superscript}</span>`;
+  }
+  function ingredientRewards(current) {
+    const ingredients=ingredientItems(current);
+    const rows=current.rewards || [];
+    return ingredients.length ? [...rows,{label:'Ingredients',value:ingredients.join(' · ')}] : rows;
+  }
   function arena(report) {
     const battle = battlePanel(report);
     return {
@@ -95,6 +120,7 @@
       outcome: clean(report.querySelector('.panel__more')),
       lines: Array.from(report.querySelectorAll('.combat-log-line'), clean),
       rewards: stats(report), battleStatistics: stats(battle),
+      ingredientDrops: parseIngredients(passiveText(report)),
       specialRewards: specialRewards(rewardScope(report)),
       text: passiveText(report) + (battle ? '\n\n' + passiveText(battle) : ''),
       snapshotHtml: snapshot(report) + (battle ? snapshot(battle) : '')
@@ -141,6 +167,7 @@
       },
       streetLevel: clean(context?.querySelector('.st-level__head')),
       notes: clean(context?.querySelector('.st-strip__notes')),
+      ingredientDrops: parseIngredients(sections.map(passiveText).join('\n\n')),
       text: sections.map(passiveText).join('\n\n'),
       snapshotHtml: sections.map(snapshot).join('')
     };
@@ -289,7 +316,7 @@
     const now = new Date().toISOString();
     const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.6.0', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.6.2', id: crypto.randomUUID(),
       firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -379,7 +406,7 @@
     if (current.type === 'streets') {
       const momentum = current.momentumDetails;
       return section('Story', paragraph(current.story))
-        + section('Take', pairs(current.rewards))
+        + section('Take', pairs(ingredientRewards(current)))
         + section('Street · Witnesses · Alliance', pairs(current.outcomeStatistics))
         + section('Breakdown', table(['Source','Cash','EXP'], current.bonusBreakdown?.map(row => [row.source, row.cash, row.exp])))
         + section('Momentum', momentum ? paragraph([momentum.progress, momentum.bonus].filter(Boolean).join(' · ')) + paragraph(momentum.note) : paragraph(current.momentum))
@@ -387,7 +414,7 @@
         + section('Street level', paragraph(current.streetLevel) + paragraph(current.notes));
     }
     if (current.type === 'arena') return section('Outcome', paragraph(current.outcome))
-      + section('Rewards', pairs(current.rewards))
+      + section('Rewards', pairs(ingredientRewards(current)))
       + section('Battle statistics', pairs(current.battleStatistics))
       + section('Fight log', current.lines?.length ? `<div class="fight-log">${current.lines.map(line => `<p>${escape(line)}</p>`).join('')}</div>` : '');
     return section('Captured content', `<pre>${escape(current.text || '')}</pre>`);
@@ -419,7 +446,7 @@
     const rewards = isHollow ? latest.levelUps || [] : latest.specialRewards?.length ? latest.specialRewards : parseSpecialRewards(latest.text || '');
     const ecto=latest.currencies?.find(row=>row.label==='Ectoplasm')?.value || '0';
     const title=isHollow ? `${latest.opponent} - ${ecto} Ecto - ${latest.statGains?.map(row=>`${row.value} ${row.label}`).join(' · ') || 'No stat gain'}` : latest.title;
-    return `<details class="event" data-id="${escape(record.id)}"><summary><span>${escape(formatTime(record.firstObservedAt, record.firstServerTime))} - ${escape(title)}</span>${rewards.length ? `<span class="special-reward" title="${isHollow?'Level-ups':'SPECIAL REWARD'}">${escape(rewards.join(' · '))}</span>` : ''}</summary><div class="event-content"><div class="event-meta-row"><p class="metadata">${escape(record.source.path)} · ${escape(record.captureMethod)} · ${record.revisions.length} revision(s)</p>${editable ? deleteControl(record) : ''}</div>${eventBody(latest)}`
+    return `<details class="event" data-id="${escape(record.id)}"><summary><span>${escape(formatTime(record.firstObservedAt, record.firstServerTime))} - ${escape(title)}</span>${rewards.length ? `<span class="special-reward" title="${isHollow?'Level-ups':'SPECIAL REWARD'}">${escape(rewards.join(' · '))}</span>` : ''}${ingredientIndicator(latest)}</summary><div class="event-content"><div class="event-meta-row"><p class="metadata">${escape(record.source.path)} · ${escape(record.captureMethod)} · ${record.revisions.length} revision(s)</p>${editable ? deleteControl(record) : ''}</div>${eventBody(latest)}`
       + (record.revisions.length > 1 ? `<details class="revisions"><summary>Earlier observations (${record.revisions.length - 1})</summary>${record.revisions.slice(0,-1).map(r => `<section><h3>${escape(formatTime(r.observedAt, r.serverTime))}</h3>${eventBody(r)}</section>`).join('')}</details>` : '')
       + '</div></details>';
   }
@@ -455,7 +482,7 @@
   }
   const petCss = `.pet-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;margin:8px 0}.pet-group{flex:0 0 calc((100% - 16px)/3);min-width:0}.pet-group>summary{overflow-wrap:anywhere}.pet-meals{padding:0 10px}.pet-meal{padding:10px 0;border-bottom:1px solid #40566b;overflow-wrap:anywhere}.pet-meal:last-child{border-bottom:0}.pet-meal p{margin:4px 0;line-height:1.6}.pet-meal-heading{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px 8px}.pet-meal-heading p{flex:1 1 120px}.pet-time{font:11px ui-monospace,monospace;color:#9db0c4;font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}.pet-level-up{border-top:1px solid #536b82;padding-top:8px;color:#ffd780}@media(max-width:600px){.pet-row{gap:4px}.pet-group{flex-basis:calc((100% - 8px)/3)}.pet-group>summary{padding:10px 4px;font-size:13px}.pet-meals{padding:0 6px}.pet-meal{font-size:12px}}`;
   const groupCss = `.hollow-heading{display:inline-flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px 16px}.hollow-heading b{letter-spacing:.1em}.hollow-total{font-size:13px;letter-spacing:0;font-variant-numeric:tabular-nums}.hollow-total.speed{color:#76acff}.hollow-total.power{color:#ff8088}.hollow-total.strength{color:#73dc96}.event-group{margin-bottom:4px;border:1px solid #536b82;border-radius:6px;background:#142231;overflow:hidden}.event-group>summary{list-style:none;text-align:center;font-size:16px;font-weight:bold;letter-spacing:.05em;padding:12px 14px;cursor:pointer;border-radius:5px;background:#1c3043;transition:background-color .15s ease}.event-group>summary::-webkit-details-marker{display:none}.event-group>summary::after{content:' ▸';color:#aaceec}.event-group[open]>summary::after{content:' ▾'}.event-group>summary:hover,.event>summary:hover{background:#29445c}.event-group[open]>summary{border-bottom:1px solid #40566b;border-radius:5px 5px 0 0}.group-events{padding:0 10px}.event>summary{border-radius:5px;transition:background-color .15s ease}`;
-  const contentCss = `*{box-sizing:border-box}.event{border:1px solid #536b82;border-radius:6px;margin:10px 0;background:#142231}.event>summary{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px;cursor:pointer;list-style:none;font-weight:650}.event>summary::-webkit-details-marker{display:none}.event>summary>span:first-child{min-width:0;overflow-wrap:anywhere}.event>summary>span:first-child::before{content:'▸ ';color:#9cbedb}.event[open]>summary>span:first-child::before{content:'▾ '}.event[open]>summary{border-bottom:1px solid #40566b}.special-reward{max-width:50%;overflow-wrap:anywhere;color:#ffd780;flex-shrink:0;text-align:right}.event-content{padding:4px 18px 18px}.event-section{margin-top:20px}.event-section h3{font-size:15px;color:#aaceec;margin:0 0 8px}.event-section p{margin:6px 0;line-height:1.6}.metadata{color:#9db0c4;font-size:12px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px;color:inherit}th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #30475c;vertical-align:top}th{color:#aaceec}td:not(:first-child){white-space:nowrap}.fight-log p{padding:6px 0;border-bottom:1px solid #30475c}.revisions{margin-top:20px}.revisions>summary{cursor:pointer;color:#aaceec}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.6 system-ui}summary:focus-visible,button:focus-visible{outline:2px solid #ffd780;outline-offset:2px}@media(max-width:600px){.event>summary{gap:10px;font-size:12px}.special-reward{max-width:40%;white-space:normal}.event-content{padding:4px 10px 12px}}`;
+  const contentCss = `*{box-sizing:border-box}.event{border:1px solid #536b82;border-radius:6px;margin:10px 0;background:#142231}.event>summary{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px;cursor:pointer;list-style:none;font-weight:650}.event>summary::-webkit-details-marker{display:none}.event>summary>span:first-child{flex:1;min-width:0;overflow-wrap:anywhere}.event>summary>span:first-child::before{content:'▸ ';color:#9cbedb}.event[open]>summary>span:first-child::before{content:'▾ '}.event[open]>summary{border-bottom:1px solid #40566b}.special-reward{max-width:50%;overflow-wrap:anywhere;color:#ffd780;flex-shrink:0;text-align:right}.ingredient-indicator{color:#6dbf30;flex:none;white-space:nowrap;font-size:13px}.event-content{padding:4px 18px 18px}.event-section{margin-top:20px}.event-section h3{font-size:15px;color:#aaceec;margin:0 0 8px}.event-section p{margin:6px 0;line-height:1.6}.metadata{color:#9db0c4;font-size:12px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px;color:inherit}th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #30475c;vertical-align:top}th{color:#aaceec}td:not(:first-child){white-space:nowrap}.fight-log p{padding:6px 0;border-bottom:1px solid #30475c}.revisions{margin-top:20px}.revisions>summary{cursor:pointer;color:#aaceec}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.6 system-ui}summary:focus-visible,button:focus-visible{outline:2px solid #ffd780;outline-offset:2px}@media(max-width:600px){.event>summary{gap:10px;font-size:12px}.special-reward{max-width:40%;white-space:normal}.event-content{padding:4px 10px 12px}}`;
   function exportHtml() {
     const sections = groupedEvents(records());
     download(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>MaskedCity Event Archive</title><style>body{max-width:1180px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#e8edf3;background:#111820}${contentCss}${groupCss}${petCss}</style><h1>MaskedCity Event Archive</h1><p>Recorded browser observations. All displayed times use MaskedCity server time (Pacific); JSON also retains UTC observation times.</p>${sections || '<p>No events saved.</p>'}</html>`, 'text/html', 'html');
