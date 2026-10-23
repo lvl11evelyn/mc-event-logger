@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.6.2
+// @version      0.6.3
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -98,15 +98,16 @@
     return uniqueRewards([...(current.ingredientDrops || []),...parseIngredients(current.text)]);
   }
   function ingredientIndicator(current) {
-    const count=ingredientItems(current).reduce((total,item)=>{
+    const ingredients=ingredientItems(current);
+    const count=ingredients.reduce((total,item)=>{
       const quantity=item.match(/^\+?([\d,]+)\s*(?:[×x]\s*|\s+)/i)
         || item.match(/\s+[×x]\s*([\d,]+)$/i);
       return total+(quantity ? Number(quantity[1].replace(/,/g,'')) : 1);
     },0);
     if (!count) return '';
     const superscript=String(count).replace(/\d/g,digit=>'⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(digit)]);
-    const label=`Ingredients received! Quantity: ${count}`;
-    return `<span class="ingredient-indicator" title="${label}" aria-label="${label}">⨃⁺${superscript}</span>`;
+    const label=`Ingredients received: ${ingredients.join(' · ')}`;
+    return `<span class="ingredient-indicator" title="${escape(label)}" aria-label="${escape(label)}">⨃⁺${superscript}</span>`;
   }
   function ingredientRewards(current) {
     const ingredients=ingredientItems(current);
@@ -316,7 +317,7 @@
     const now = new Date().toISOString();
     const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.6.2', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.6.3', id: crypto.randomUUID(),
       firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
