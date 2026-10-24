@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.6.3
+// @version      0.6.5
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -317,7 +317,7 @@
     const now = new Date().toISOString();
     const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.6.3', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.6.5', id: crypto.randomUUID(),
       firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -546,14 +546,17 @@
     decorateGroup(state.group);
   }
   function placePopout(group, box) {
-    const area=workspace(),maxWidth=area.right-area.left,maxHeight=area.bottom-area.top;
-    const width=Math.min(maxWidth,Math.max(Math.min(headerMinimum(group),maxWidth),box.width));
-    const height=Math.min(maxHeight,Math.max(Math.min(120,maxHeight),box.height));
-    const left=Math.max(area.left,Math.min(area.right-width,box.left));
-    const top=Math.max(area.top,Math.min(area.bottom-height,box.top));
-    Object.assign(group.style,{left:`${left}px`,top:`${top}px`,width:`${width}px`,height:`${height}px`});
-    const headerHeight=group.querySelector(':scope > summary').getBoundingClientRect().height;
-    group.style.setProperty('--float-body-height',`${Math.max(0,height-headerHeight-2)}px`);
+    const width=Math.max(headerMinimum(group),box.width),height=Math.max(120,box.height);
+    Object.assign(group.style,{width:`${width}px`,height:`${height}px`});
+    // Only the draggable header must stay reachable; its body may be off-screen.
+    const container=group.getBoundingClientRect();
+    const header=group.querySelector(':scope > summary').getBoundingClientRect();
+    const offsetX=header.left-container.left,offsetY=header.top-container.top;
+    const visibleWidth=Math.min(50,header.width),visibleHeight=header.height/2;
+    const left=Math.max(visibleWidth-header.width-offsetX,Math.min(innerWidth-visibleWidth-offsetX,box.left));
+    const top=Math.max(-visibleHeight-offsetY,Math.min(innerHeight-visibleHeight-offsetY,box.top));
+    Object.assign(group.style,{left:`${left}px`,top:`${top}px`});
+    group.style.setProperty('--float-body-height',`${Math.max(0,height-header.height-2)}px`);
   }
   function updateBounds() {
     if (!shadow) return;
@@ -627,13 +630,10 @@
     updateBounds();
   }
   function resizedBox(base, side, dx, dy) {
-    const area=workspace(),minimum=Math.min(base.minimumWidth,area.right-area.left);
     const right=base.left+base.width;
-    const width=side==='left'
-      ? Math.max(minimum,Math.min(right-area.left,base.width-dx))
-      : Math.max(minimum,Math.min(area.right-base.left,base.width+dx));
+    const width=Math.max(base.minimumWidth,base.width+(side==='left'?-dx:dx));
     return {left:side==='left'?right-width:base.left,top:base.top,width,
-      height:Math.max(Math.min(120,area.bottom-base.top),Math.min(area.bottom-base.top,base.height+dy))};
+      height:Math.max(120,base.height+dy)};
   }
   function installPopoutInteraction() {
     let suppressedSummary=null;
@@ -690,7 +690,7 @@
     },true);
   }
   // Independent controls and dockable section surfaces.
-  const controlsCss = `button{font-size:13px;font-family:var(--font-ui)}.event-meta-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.event-meta-row .metadata{min-width:0;overflow-wrap:anywhere}.delete-event{flex:none;width:30px;height:30px;padding:0;margin:6px 0;background:#8f2028;border-color:#db6570;color:#fff;font:24px/1 system-ui;border-radius:4px}.delete-event:hover{background:#bc2935}.pet-meal-heading .delete-event{width:22px;height:22px;margin:0;font-size:18px}#controls{position:fixed;bottom:6px;left:12px;display:flex;gap:8px;padding:0;border:0;background:transparent;pointer-events:none;z-index:1000000}#controls button{pointer-events:auto;opacity:1;margin:0}#status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}#popouts{pointer-events:none}.event-group>summary{position:relative;padding-left:42px;padding-right:42px;white-space:nowrap;overflow-wrap:normal;font-size:calc(16px * var(--header-scale,1))}.hollow-total{font-size:calc(13px * var(--header-scale,1))}.hollow-heading{flex-wrap:nowrap;white-space:nowrap}.section-label{white-space:nowrap}.header-probe{position:fixed!important;left:-10000px!important;top:0!important;width:max-content!important;max-width:none!important;min-width:0!important;visibility:hidden;pointer-events:none}.popout-toggle[hidden]{display:none}.popout-toggle{position:absolute;left:6px;top:6px;width:24px;height:24px;margin:0;padding:0;display:inline-grid;place-items:center;font-size:16px;letter-spacing:0;cursor:pointer}.popout-toggle::before{content:'↗'}.popped-out>summary>.popout-toggle::before{content:'↙'}.popped-out{position:fixed;margin:0;pointer-events:auto;flex:none;max-width:calc(100vw - 16px);box-shadow:0 6px 24px #0008;isolation:isolate}.popped-out:not([open]){height:auto!important}.popped-out>summary{cursor:grab;touch-action:none;user-select:none}.popped-out>summary:active{cursor:grabbing}.popped-out[open]>.group-events,.popped-out[open]>.pet-meals{max-height:var(--float-body-height);overflow:auto;overscroll-behavior:contain;padding-bottom:20px}.resize-handle{position:absolute;bottom:0;width:18px;height:18px;margin:0;padding:0;border:0;border-radius:0;background:transparent;z-index:2;touch-action:none}.resize-right{right:0;cursor:se-resize}.resize-left{left:0;cursor:sw-resize}.resize-handle::before{content:'';position:absolute;bottom:4px;width:8px;height:8px;border-bottom:2px solid #aaceec}.resize-right::before{right:4px;border-right:2px solid #aaceec}.resize-left::before{left:4px;border-left:2px solid #aaceec}.pet-row:empty{display:none}@media(max-width:767px){.event-group>summary{padding:12px 8px;overflow-x:auto}.popout-toggle{display:none}.hollow-heading{gap:8px;font-size:calc(13px * var(--header-scale,1))}.hollow-total{font-size:calc(11px * var(--header-scale,1))}.pet-group>summary{padding:12px 4px;font-size:calc(13px * var(--header-scale,1))}}`;
+  const controlsCss = `button{font-size:13px;font-family:var(--font-ui)}.event-meta-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.event-meta-row .metadata{min-width:0;overflow-wrap:anywhere}.delete-event{flex:none;width:30px;height:30px;padding:0;margin:6px 0;background:#8f2028;border-color:#db6570;color:#fff;font:24px/1 system-ui;border-radius:4px}.delete-event:hover{background:#bc2935}.pet-meal-heading .delete-event{width:22px;height:22px;margin:0;font-size:18px}#controls{position:fixed;bottom:6px;left:12px;display:flex;gap:8px;padding:0;border:0;background:transparent;pointer-events:none;z-index:1000000}#controls button{pointer-events:auto;opacity:1;margin:0}#status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}#popouts{pointer-events:none}.event-group>summary{position:relative;padding-left:42px;padding-right:42px;white-space:nowrap;overflow-wrap:normal;font-size:calc(16px * var(--header-scale,1))}.hollow-total{font-size:calc(13px * var(--header-scale,1))}.hollow-heading{flex-wrap:nowrap;white-space:nowrap}.section-label{white-space:nowrap}.header-probe{position:fixed!important;left:-10000px!important;top:0!important;width:max-content!important;max-width:none!important;min-width:0!important;visibility:hidden;pointer-events:none}.popout-toggle[hidden]{display:none}.popout-toggle{position:absolute;left:6px;top:6px;width:24px;height:24px;margin:0;padding:0;display:inline-grid;place-items:center;font-size:16px;letter-spacing:0;cursor:pointer}.popout-toggle::before{content:'↗'}.popped-out>summary>.popout-toggle::before{content:'↙'}.popped-out{position:fixed;margin:0;pointer-events:auto;flex:none;box-shadow:0 6px 24px #0008;isolation:isolate}.popped-out:not([open]){height:auto!important}.popped-out>summary{cursor:grab;touch-action:none;user-select:none}.popped-out>summary:active{cursor:grabbing}details:not(.popped-out)>.group-events,details:not(.popped-out)>.pet-meals{max-height:40vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--align) transparent}.popped-out[open]>.group-events,.popped-out[open]>.pet-meals{max-height:var(--float-body-height);overflow:auto;overscroll-behavior:contain;padding-bottom:20px}.resize-handle{position:absolute;bottom:0;width:18px;height:18px;margin:0;padding:0;border:0;border-radius:0;background:transparent;z-index:2;touch-action:none}.resize-right{right:0;cursor:se-resize}.resize-left{left:0;cursor:sw-resize}.resize-handle::before{content:'';position:absolute;bottom:4px;width:8px;height:8px;border-bottom:2px solid #aaceec}.resize-right::before{right:4px;border-right:2px solid #aaceec}.resize-left::before{left:4px;border-left:2px solid #aaceec}.pet-row:empty{display:none}@media(max-width:767px){.event-group>summary{padding:12px 8px;overflow-x:auto}.popout-toggle{display:none}.hollow-heading{gap:8px;font-size:calc(13px * var(--header-scale,1))}.hollow-total{font-size:calc(11px * var(--header-scale,1))}.pet-group>summary{padding:12px 4px;font-size:calc(13px * var(--header-scale,1))}}`;
   function mount() {
     if (host || !document.body || !allowed()) return;
     host = document.createElement('div');

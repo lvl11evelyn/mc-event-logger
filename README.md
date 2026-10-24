@@ -85,6 +85,8 @@ Level-ups also use a distinct result format, such as `Cydaea ate Brawler Brunch 
 
 The main panel opens directly above the buttons and grows upward only as much as its contents need. It is up to 1,180 pixels wide. Once its contents fill the available viewport height, the event area scrolls instead of extending beyond the top edge. The buttons remain outside the panel's bounds and accessible at every size. Clicking outside the archive closes the main panel while letting that click reach the game beneath it, including a visible **Fight Again** button. **Escape** closes the main panel too. Neither action hides popped-out sections.
 
+Docked category bodies and pet meal lists have a maximum height of 40vh and scroll independently, with thin scrollbars using the site’s `--align` color.
+
 ### Floating sections
 
 Each category and each pet history has a popout toggle in its header's upper-left corner:
@@ -96,7 +98,7 @@ Each category and each pet history has a popout toggle in its header's upper-lef
 
 Section headers stay on one line, and each popout’s minimum width is measured from its full header so resizing cannot clip its text. Popouts are available at viewport widths of 768 px and above, provided the header fits. Below 768 px the popout controls are hidden; existing popouts automatically dock without opening a hidden main panel.
 
-Popouts remain visible and usable when the main panel closes, and their bounds are kept within the available viewport above the floating buttons. Several sections can float at once; interacting with one brings it forward. New captures update open sections, including popouts. Refresh preserves expanded entries, section state, window position, size, and scroll position where possible. Delete and Undo also update the relevant sections without reopening a hidden main panel.
+Popouts remain visible and usable when the main panel closes, and can be parked partly off-screen. Position limits keep at least 50 px of each header’s width and half its height inside the viewport so it remains reachable for dragging. The body may extend outside the viewport, and resizing is no longer capped at viewport edges. Several sections can float at once; interacting with one brings it forward. New captures update open sections, including popouts. Refresh preserves expanded entries, section state, window position, size, and scroll position where possible. Delete and Undo also update the relevant sections without reopening a hidden main panel.
 
 Window layout is kept for the current page. Reloading or navigating starts with docked sections; saved event records remain in userscript storage. If the final meal in a popped-out pet history is deleted, that empty window is removed. Undo restores its record as a docked history. HTML exports remain standalone collapsible archives without dragging, docking, resizing, or delete controls.
 
