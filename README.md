@@ -144,3 +144,7 @@ For capture problems, [open an issue](https://github.com/lvl11evelyn/mc-event-lo
 Version 0.6.1 recognizes the result message `Picked up for the Lab: <item>.` and shows an Ingredients row under Arena Rewards or Streets Take. It preserves the item label and any quantity supplied by the game, without adding an assumed quantity. New captures store `ingredientDrops` in JSON; the panel and HTML export also recover this message from existing saved event text. Version 0.6.2 adds a green (`#6dbf30`) `⨃⁺¹` indicator at the far right of event headers. The superscript is the total ingredient quantity; explicit quantities are summed, and each unquantified item counts as one. As of version 0.6.3, hovering the indicator lists the ingredients received, including any recorded quantities. The indicator also appears in HTML exports and is recovered for older saved events.
 
 The supplied October 23 archive confirms Adrenal Extract drops in both newest arena fights. Streets support uses the same result message within the captured result/outcome/context; a different Streets message would require another DOM example.
+
+### Poker pages
+
+Version 0.6.6 hides the floating Review and Capture page controls on `/poker` and `/poker/*`. They return when you leave Poker, including navigation without a full page reload.
