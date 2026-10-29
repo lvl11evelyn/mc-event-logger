@@ -8,7 +8,7 @@ A browser userscript that preserves MaskedCity's temporary event results so you 
 
 Arena fight reports and Working the Streets results can disappear when you navigate away. This script automatically records supported result containers as they appear or change, saves them in your userscript manager's storage, and adds an archive panel for later review.
 
-- **Arena:** opponent/report title, outcome, combat log, rewards, and battle statistics.
+- **Arena:** opponent/report title, outcome, combat log, rewards, and battle statistics. Both the legacy report and the redesigned result/rewards/gear/battle-log layout are supported.
 - **Streets:** result story, cash, EXP, reputation, street progression, witnesses, alliance gains, bonus breakdown, momentum, boosts, and street level.
 - **The Hollow:** opponent, remaining health, experience, reputation, equipment experience/level-ups, the fight's stat gain, currency drops, and pawn-item drops. Hidden stale reward fields and resource-find panels are excluded.
 - **Pet feeding:** individual meals on `/pets/<id>`, including food, displayed EXP/life gains, and any notice appended to the feeding result, such as a level-up.
@@ -148,3 +148,9 @@ The supplied October 23 archive confirms Adrenal Extract drops in both newest ar
 ### Poker pages
 
 Version 0.6.6 hides the floating Review and Capture page controls on `/poker` and `/poker/*`. They return when you leave Poker, including navigation without a full page reload.
+
+### Redesigned Arena results
+
+Version 0.6.7 restores automatic capture for the October Arena layout: `.ar-result`, `.ar-pay`, `.ar-gear`, and `.ar-log`. It records the current observation in server time, including the opponent, outcome, combat lines, cash, EXP, reputation, equipment progress, and the statistics actually shown in the log summary. Ingredient drops and special rewards remain supported. The legacy `.arena-report` layout is still supported.
+
+Existing archived fights keep their original timestamps. Fights missed while the layout was unsupported cannot be recovered unless their result DOM or another record is still available. Reload the active game tab after updating the script.

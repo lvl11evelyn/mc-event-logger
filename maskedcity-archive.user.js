@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.6.6
+// @version      0.6.7
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -24,6 +24,7 @@
     && !/^\/wiki/i.test(location.pathname);
   if (!allowed()) return;
   const PREFIX = 'mc-event-v1:';
+  const RESULT_SELECTOR = '.arena-report, .ar-result, .st-hit';
   const known = new WeakMap();
   const petAlerts = new WeakMap();
   const hollowFights = new WeakMap();
@@ -125,6 +126,43 @@
       specialRewards: specialRewards(rewardScope(report)),
       text: passiveText(report) + (battle ? '\n\n' + passiveText(battle) : ''),
       snapshotHtml: snapshot(report) + (battle ? snapshot(battle) : '')
+    };
+  }
+  function modernArena(result) {
+    // The redesigned Arena has sibling result, reward, gear and log blocks.
+    // Keep the result node as the record identity, as with the legacy report.
+    const siblings=[result];
+    for (let node=result.nextElementSibling;node;node=node.nextElementSibling) {
+      if (node.matches('.ar-result, .arena-report')) break;
+      siblings.push(node);
+    }
+    const log=siblings.find(node=>node.matches('.ar-log'));
+    if (!log?.querySelector('.combat-log-line')) return null;
+    const sections=siblings.filter(node=>node.matches('.ar-result, .ar-flavor, .ar-pay, .ar-gear, .ar-log, .reward-banner')
+      || (!node.matches('.ar-actions, script, style, form')
+        && (parseIngredients(passiveText(node)).length || specialRewards(node).length)));
+    const vs=clean(result.querySelector('.ar-result__vs'));
+    const opponent=vs.replace(/^vs\.?\s+/i,'').replace(/\s*·\s*[\d,]+\s+rounds?\s*$/i,'');
+    const rounds=vs.match(/([\d,]+)\s+rounds?/i)?.[1];
+    const summary=clean(log.querySelector('.ar-log__n'));
+    const metrics=[
+      {label:'Total Rounds',value:summary.match(/([\d,]+)\s+rounds?/i)?.[1] || rounds},
+      {label:'Hit Rate',value:summary.match(/([\d.]+%)\s+hits/i)?.[1]},
+      {label:'Total Damage',value:summary.match(/([\d,]+)\s+damage/i)?.[1]},
+      {label:'Average Damage',value:summary.match(/\bavg\s+([\d,.]+)/i)?.[1]}
+    ].filter(row=>row.value);
+    const text=sections.map(passiveText).join('\n\n');
+    return {
+      type:'arena',title:opponent ? `You vs ${opponent}` : 'Arena report',
+      outcome:[clean(result.querySelector('.ar-result__word')),rounds ? `${rounds} rounds` : ''].filter(Boolean).join(' · '),
+      lines:Array.from(log.querySelectorAll('.combat-log-line'),clean),
+      rewards:[...siblings.flatMap(node=>Array.from(node.querySelectorAll('.ar-pay__item'),item=>{
+        const label=clean(item.querySelector('span'));
+        return {label:/^rep$/i.test(label)?'Reputation':label,value:clean(item.querySelector('b'))};
+      })).filter(row=>row.label && row.value),...siblings.filter(node=>node.matches('.ar-gear')).flatMap(stats)],
+      battleStatistics:metrics,ingredientDrops:parseIngredients(text),
+      specialRewards:uniqueRewards(sections.flatMap(specialRewards)),
+      text,snapshotHtml:sections.map(snapshot).join('')
     };
   }
   function streets(result) {
@@ -317,7 +355,7 @@
     const now = new Date().toISOString();
     const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.6.6', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.6.7', id: crypto.randomUUID(),
       firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -337,13 +375,16 @@
   }
   function scan(root = document) {
     if (!allowed() || !root.querySelectorAll) return;
-    const reports = Array.from(root.querySelectorAll('.arena-report, .st-hit'));
-    if (root.matches?.('.arena-report, .st-hit')) reports.push(root);
+    const reports = Array.from(root.querySelectorAll(RESULT_SELECTOR));
+    if (root.matches?.(RESULT_SELECTOR)) reports.push(root);
     reports.forEach(report => {
       // A replaced result has already been archived with its sibling rewards
       // and stats. Don't overwrite it with a now-detached, incomplete view.
       if (!report.isConnected && known.has(report)) return;
       if (report.matches('.arena-report') && report.querySelector('.combat-log-line')) save(report, arena(report));
+      else if (report.matches('.ar-result')) {
+        const payload=modernArena(report);if (payload) save(report,payload);
+      }
       else if (report.matches('.st-hit') && clean(report.querySelector('.st-hit__line, .st-hit__cash'))) save(report, streets(report));
     });
     const hollowPanels=Array.from(root.querySelectorAll('#hlFight'));
@@ -753,7 +794,7 @@
     for (const mutation of mutations) {
       for (const node of [...mutation.addedNodes, ...mutation.removedNodes]) scan(node);
       const element = mutation.target.nodeType === 1 ? mutation.target : mutation.target.parentElement;
-      const report = element?.closest?.('.arena-report, .st-hit');
+      const report = element?.closest?.(RESULT_SELECTOR);
       if (report) scan(report);
     }
     scan(); mount();
