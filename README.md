@@ -93,7 +93,7 @@ Each category and each pet history has a popout toggle in its header's upper-lef
 
 1. Click **↗** to detach that section into a floating window. Its expanded entries remain expanded.
 2. Click the header normally to expand or collapse the section. Click and drag the header to move the window; dragging does not toggle it.
-3. When expanded, drag either lower corner to resize the window's width and height. Long content scrolls inside the resized window. Focus a corner and use arrow keys for 10-pixel adjustments, or Shift plus arrow keys for 40-pixel adjustments.
+3. When expanded, drag anywhere along the body’s left or right edge to resize its width, the bottom edge to resize its height, or either lower corner to change both. Resize targets stay below the header and disappear when collapsed. Long content scrolls inside the resized window. Focus a corner and use arrow keys for 10-pixel adjustments, or Shift plus arrow keys for 40-pixel adjustments.
 4. Click **↙** to return the section to its original location in the main panel. Docking it while the main panel is closed does not reopen the panel.
 
 Section headers stay on one line, and each popout’s minimum width is measured from its full header so resizing cannot clip its text. Popouts are available at viewport widths of 768 px and above, provided the header fits. Below 768 px the popout controls are hidden; existing popouts automatically dock without opening a hidden main panel.
@@ -158,3 +158,5 @@ Existing archived fights keep their original timestamps. Fights missed while the
 ### Layout persistence and changed reward banners
 
 Version 0.6.9 includes persisted popout layout and preserves unfamiliar passive sibling banners in redesigned Arena snapshots. This avoids discarding new reward markup merely because its CSS class changed. Unknown special-reward wording may still need a parser update; a saved export or live DOM containing the message is needed to identify it.
+
+Version 0.6.10 recognizes `Special reward:` in native `.alert` containers regardless of capitalization or alert variant. The sibling reward does not depend on an equipment block being present. Existing saved text is also checked when rendering event headings and HTML exports.
