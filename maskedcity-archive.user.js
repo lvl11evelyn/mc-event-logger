@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.6.7
+// @version      0.6.9
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -33,7 +33,9 @@
   const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
   let host, shadow, status, error = '';
   let lastDeleted = null;
+  const LAYOUT_KEY = 'mc-popout-layout-v1';
   const popouts = new Map();
+  const layoutPreferences=loadPopoutLayout();
   let popoutLayer=10, gesture=null, renderPending=false, renderQueued=false;
   const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
   const clean = node => (node?.textContent || '').replace(/\s+/g, ' ').trim();
@@ -138,9 +140,9 @@
     }
     const log=siblings.find(node=>node.matches('.ar-log'));
     if (!log?.querySelector('.combat-log-line')) return null;
-    const sections=siblings.filter(node=>node.matches('.ar-result, .ar-flavor, .ar-pay, .ar-gear, .ar-log, .reward-banner')
-      || (!node.matches('.ar-actions, script, style, form')
-        && (parseIngredients(passiveText(node)).length || specialRewards(node).length)));
+    // Preserve unfamiliar reward banners too: limiting snapshots to known
+    // classes can discard the evidence needed to recognize a changed reward UI.
+    const sections=siblings.filter(node=>!node.matches('.ar-actions, script, style, form') && shown(node));
     const vs=clean(result.querySelector('.ar-result__vs'));
     const opponent=vs.replace(/^vs\.?\s+/i,'').replace(/\s*·\s*[\d,]+\s+rounds?\s*$/i,'');
     const rounds=vs.match(/([\d,]+)\s+rounds?/i)?.[1];
@@ -355,7 +357,7 @@
     const now = new Date().toISOString();
     const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.6.7', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.6.9', id: crypto.randomUUID(),
       firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -367,7 +369,7 @@
       known.set(node, {record, fingerprint});
       error = '';
       indicate(`Saved ${payload.title}${payload.lines ? ` · ${payload.lines.length} log lines` : ''}`);
-      if (shadow && (popouts.size || shadow.querySelector('dialog').open)) scheduleRender();
+      if (shadow && (popouts.size || Object.keys(layoutPreferences).length || shadow.querySelector('dialog').open)) scheduleRender();
     } catch (failure) {
       error = String(failure.message || failure); indicate();
       console.error('MaskedCity archive save failed', failure);
@@ -580,6 +582,43 @@
   function canPopOut(group) {
     return innerWidth>=768 && headerMinimum(group)<=workspace().right-workspace().left;
   }
+  function loadPopoutLayout() {
+    const result=Object.create(null);
+    try {
+      const saved=GM_getValue(LAYOUT_KEY);
+      if (saved?.schemaVersion!==1) return result;
+      for (const [type,box] of Object.entries(saved.sections || {})) {
+        if (!/^(streets|arena|hollow|other|pet:\d+)$/.test(type) || !box) continue;
+        if (['left','top','width','height'].every(key=>Number.isFinite(box[key])) && box.width>0 && box.height>0)
+          result[type]={left:box.left,top:box.top,width:box.width,height:box.height,open:box.open===true};
+      }
+    } catch (_) { /* A bad layout must not prevent event recording. */ }
+    return result;
+  }
+  function persistLayout() {
+    try { GM_setValue(LAYOUT_KEY,{schemaVersion:1,sections:structuredClone(layoutPreferences)}); }
+    catch (failure) { indicate(`Layout save failed: ${failure.message || failure}`); }
+  }
+  function rememberPopout(group) {
+    if (!group.classList.contains('popped-out')) return;
+    layoutPreferences[group.dataset.type]={left:parseFloat(group.style.left),top:parseFloat(group.style.top),
+      width:parseFloat(group.style.width),height:parseFloat(group.style.height),open:group.open};
+    persistLayout();
+  }
+  function detachGroup(group,box) {
+    const type=group.dataset.type,placeholder=document.createComment(`Dock ${type}`);
+    group.replaceWith(placeholder);group.style.removeProperty('--header-scale');group.classList.add('popped-out');
+    shadow.querySelector('#popouts').append(group);popouts.set(type,{group,placeholder});
+    group.style.zIndex=String(++popoutLayer);decorateGroup(group);placePopout(group,box);
+  }
+  function restorePopouts() {
+    for (const [type,box] of Object.entries(layoutPreferences)) {
+      if (popouts.has(type)) continue;
+      const group=Array.from(shadow.querySelectorAll('#events .event-group')).find(el=>el.dataset.type===type);
+      if (!group || !canPopOut(group)) continue;
+      group.open=box.open;detachGroup(group,box);
+    }
+  }
   function dockGroup(type,state) {
     state.placeholder.replaceWith(state.group);popouts.delete(type);
     state.group.classList.remove('popped-out');state.group.removeAttribute('style');
@@ -604,6 +643,7 @@
     const area=workspace();
     host.style.setProperty('--panel-bottom',`${innerHeight-area.bottom}px`);
     for (const [type,state] of popouts) if (!canPopOut(state.group)) dockGroup(type,state);
+    restorePopouts();
     shadow.querySelectorAll('.popout-toggle').forEach(button=>{
       const allowed=canPopOut(button.closest('.event-group'));
       button.disabled=!allowed;button.hidden=!allowed;
@@ -630,14 +670,12 @@
   function togglePopout(group) {
     const type=group.dataset.type,existing=popouts.get(type);
     if (existing) {
-      dockGroup(type,existing);
+      delete layoutPreferences[type];persistLayout();dockGroup(type,existing);
     } else {
       if (!canPopOut(group)) return;
-      const rect=group.getBoundingClientRect(),placeholder=document.createComment(`Dock ${type}`);
-      group.replaceWith(placeholder);group.style.removeProperty('--header-scale');group.classList.add('popped-out');
-      shadow.querySelector('#popouts').append(group);popouts.set(type,{group,placeholder});
-      group.style.zIndex=String(++popoutLayer);
-      placePopout(group,{left:rect.left+24,top:rect.top-24,width:group.classList.contains('pet-group')?420:720,height:Math.max(280,Math.min(560,rect.height))});
+      const rect=group.getBoundingClientRect();
+      detachGroup(group,{left:rect.left+24,top:rect.top-24,width:group.classList.contains('pet-group')?420:720,height:Math.max(280,Math.min(560,rect.height))});
+      rememberPopout(group);
     }
     decorateGroup(group);updateBounds();
   }
@@ -714,6 +752,7 @@
       if (!gesture || gesture.pointerId!==event.pointerId) return;
       if (gesture.moved && gesture.mode==='drag' && event.type!=='pointercancel') suppressedSummary=gesture.summary;
       if (gesture.target.hasPointerCapture(event.pointerId)) gesture.target.releasePointerCapture(event.pointerId);
+      if (gesture.moved) rememberPopout(gesture.group);
       gesture=null;
       if (renderPending) {renderPending=false;scheduleRender();}
     };
@@ -725,9 +764,10 @@
       placePopout(group,resizedBox({left:rect.left,top:rect.top,width:rect.width,height:parseFloat(group.style.height),minimumWidth:headerMinimum(group)},handle.dataset.resize,
         event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0,
         event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0));
+      rememberPopout(group);
     });
     shadow.addEventListener('toggle',event=>{
-      if (event.target.matches?.('.popped-out')) updateBounds();
+      if (event.target.matches?.('.popped-out')) {updateBounds();rememberPopout(event.target);}
     },true);
   }
   // Independent controls and dockable section surfaces.
@@ -737,6 +777,9 @@
     if (controls) controls.style.visibility=/^\/poker(?:\/|$)/i.test(location.pathname)?'hidden':'';
   }
   function mount() {
+    if (host && !host.isConnected && document.body && allowed()) {
+      document.body.append(host);updateBounds();
+    }
     syncControlVisibility();
     if (host || !document.body || !allowed()) return;
     host = document.createElement('div');
@@ -768,7 +811,9 @@
     installPopoutInteraction();
     new ResizeObserver(updateBounds).observe(shadow.querySelector('#controls'));
     window.addEventListener('resize',updateBounds);
-    syncControlVisibility();updateBounds();indicate();
+    syncControlVisibility();
+    if (Object.keys(layoutPreferences).length) renderArchive();else updateBounds();
+    indicate();
   }
   const observer = new MutationObserver(mutations => {
     if (!allowed()) { if (host) host.style.display = 'none'; return; }

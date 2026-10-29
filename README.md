@@ -100,7 +100,7 @@ Section headers stay on one line, and each popout’s minimum width is measured 
 
 Popouts remain visible and usable when the main panel closes, and can be parked partly off-screen. Position limits keep at least 50 px of each header’s width and half its height inside the viewport so it remains reachable for dragging. The body may extend outside the viewport, and resizing is no longer capped at viewport edges. Several sections can float at once; interacting with one brings it forward. New captures update open sections, including popouts. Refresh preserves expanded entries, section state, window position, size, and scroll position where possible. Delete and Undo also update the relevant sections without reopening a hidden main panel.
 
-Window layout is kept for the current page. Reloading or navigating starts with docked sections; saved event records remain in userscript storage. If the final meal in a popped-out pet history is deleted, that empty window is removed. Undo restores its record as a docked history. HTML exports remain standalone collapsible archives without dragging, docking, resizing, or delete controls.
+Popout placements, sizes, and expanded/collapsed states are saved in userscript storage and restored across DOM rebuilds, page navigation, and reloads, even while the main panel remains closed. Explicitly docking a section clears its saved popout preference. Narrow viewports temporarily dock sections and restore their popouts when space permits. Restored positions respect the header reachability limits. If the final meal in a popped-out pet history is deleted, that empty window is removed; its saved layout remains available if a meal is restored or recorded again. Layout settings are stored separately from event records and are not included in event exports. HTML exports remain standalone collapsible archives without dragging, docking, resizing, or delete controls.
 
 ## Updates
 
@@ -154,3 +154,7 @@ Version 0.6.6 hides the floating Review and Capture page controls on `/poker` an
 Version 0.6.7 restores automatic capture for the October Arena layout: `.ar-result`, `.ar-pay`, `.ar-gear`, and `.ar-log`. It records the current observation in server time, including the opponent, outcome, combat lines, cash, EXP, reputation, equipment progress, and the statistics actually shown in the log summary. Ingredient drops and special rewards remain supported. The legacy `.arena-report` layout is still supported.
 
 Existing archived fights keep their original timestamps. Fights missed while the layout was unsupported cannot be recovered unless their result DOM or another record is still available. Reload the active game tab after updating the script.
+
+### Layout persistence and changed reward banners
+
+Version 0.6.9 includes persisted popout layout and preserves unfamiliar passive sibling banners in redesigned Arena snapshots. This avoids discarding new reward markup merely because its CSS class changed. Unknown special-reward wording may still need a parser update; a saved export or live DOM containing the message is needed to identify it.
