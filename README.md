@@ -163,6 +163,10 @@ Version 0.6.10 recognizes `Special reward:` in native `.alert` containers regard
 
 ### Delete an entire section
 
-Version 0.6.11 adds a white × in a red rounded square at the far right of each category or pet header, beside the centered label/disclosure and opposite the popout toggle. Clicking it immediately deletes all currently saved records in that section and removes its header, including when the section is collapsed or popped out. Other categories and pets are unaffected. The latest deletion can be undone from the main panel: Undo restores the entire batch and its prior popout layout. Undo is kept in memory until navigation/reload or another deletion replaces it; exports taken before deletion remain an independent backup.
+Version 0.6.11 adds a section deletion control to each category or pet header, beside the centered label/disclosure and opposite the popout toggle. Clicking it immediately deletes all currently saved records in that section and removes its header, including when the section is collapsed or popped out. Other categories and pets are unaffected. The latest deletion can be undone from the main panel: Undo restores the entire batch and its prior popout layout. Undo is kept in memory until navigation/reload or another deletion replaces it; exports taken before deletion remain an independent backup.
 
 Removed empty categories stay hidden across reloads. Newly captured events make their category appear again. This clears the recorded history, without disabling future capture. Live deleted records remain suppressed using the existing deletion markers. Section controls and layout/visibility preferences are excluded from event exports.
+
+### Clear deletion labels
+
+Version 0.6.12 labels every destructive control **Delete**, including individual events and pet meals. Popout headers place return-to-panel controls at both outer edges, with the label/disclosure centered and the red Delete button just inside the right return button. The rightmost × returns the section to the main panel without deleting records; its tooltip and accessible label state that action. Docked headers keep a popout toggle on the left and Delete on the right. Header minimum widths include the controls, and pet columns wrap on narrow panels to keep the text buttons usable.

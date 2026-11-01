@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.6.11
+// @version      0.6.12
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -359,7 +359,7 @@
     const now = new Date().toISOString();
     const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.6.11', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.6.12', id: crypto.randomUUID(),
       firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -466,7 +466,7 @@
     return section('Captured content', `<pre>${escape(current.text || '')}</pre>`);
   }
   function deleteControl(record) {
-    return `<button type="button" class="delete-event" data-delete-id="${escape(record.id)}" aria-label="Delete ${escape(record.revisions.at(-1).title)}" title="Delete this record">×</button>`;
+    return `<button type="button" class="delete-event" data-delete-id="${escape(record.id)}" aria-label="Delete ${escape(record.revisions.at(-1).title)}" title="Delete this record">Delete</button>`;
   }
   function loadHiddenSections() {
     try {
@@ -602,10 +602,21 @@
     }
     if (!summary.querySelector('.delete-section')) {
       const remove=document.createElement('button');remove.type='button';remove.className='delete-section';
-      remove.textContent='×';remove.setAttribute('aria-label',`Delete all ${sectionLabel(group)} records`);
+      remove.textContent='Delete';remove.setAttribute('aria-label',`Delete all ${sectionLabel(group)} records`);
       remove.title='Delete this section and its records';summary.append(remove);
     }
     const popped=group.classList.contains('popped-out');
+    let returnButton=summary.querySelector('.dock-return');
+    if (popped && !returnButton) {
+      returnButton=document.createElement('button');returnButton.type='button';returnButton.className='dock-return';
+      returnButton.textContent='×';summary.append(returnButton);
+    }
+    if (returnButton) {
+      if (popped) {
+        returnButton.setAttribute('aria-label',`Return ${sectionLabel(group)} to panel`);
+        returnButton.title='Return to panel';
+      } else returnButton.remove();
+    }
     const button=summary.querySelector('.popout-toggle');
     button.setAttribute('aria-label',`${popped?'Dock':'Pop out'} ${sectionLabel(group)}`);
     button.setAttribute('aria-pressed',String(popped));button.title=button.getAttribute('aria-label');
@@ -622,7 +633,7 @@
   }
   // Measure the unwrapped header, including its disclosure and docking controls.
   function headerMinimum(group) {
-    const probe=document.createElement('details');probe.className='event-group header-probe';
+    const probe=document.createElement('details');probe.className='event-group header-probe'+(group.classList.contains('popped-out')?' popped-out':'');
     probe.append(group.querySelector(':scope > summary').cloneNode(true));
     shadow.querySelector('#popouts').append(probe);
     const width=Math.ceil(probe.getBoundingClientRect().width)+2;
@@ -775,7 +786,7 @@
       }
       const remove=event.target.closest('.delete-section');
       if (remove) {event.preventDefault();event.stopPropagation();deleteSection(remove.closest('.event-group'));return;}
-      const toggle=event.target.closest('.popout-toggle');
+      const toggle=event.target.closest('.popout-toggle, .dock-return');
       if (toggle) {event.preventDefault();event.stopPropagation();togglePopout(toggle.closest('.event-group'));}
     },true);
     shadow.addEventListener('pointerdown',event=>{
@@ -828,7 +839,7 @@
     },true);
   }
   // Independent controls and dockable section surfaces.
-  const controlsCss = `button{font-size:13px;font-family:var(--font-ui)}.event-meta-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.event-meta-row .metadata{min-width:0;overflow-wrap:anywhere}.delete-event{flex:none;width:30px;height:30px;padding:0;margin:6px 0;background:#8f2028;border-color:#db6570;color:#fff;font:24px/1 system-ui;border-radius:4px}.delete-event:hover{background:#bc2935}.pet-meal-heading .delete-event{width:22px;height:22px;margin:0;font-size:18px}#controls{position:fixed;bottom:6px;left:12px;display:flex;gap:8px;padding:0;border:0;background:transparent;pointer-events:none;z-index:1000000}#controls button{pointer-events:auto;opacity:1;margin:0}#status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}#popouts{pointer-events:none}.event-group>summary{position:relative;padding-left:42px;padding-right:42px;white-space:nowrap;overflow-wrap:normal;font-size:calc(16px * var(--header-scale,1))}.hollow-total{font-size:calc(13px * var(--header-scale,1))}.hollow-heading{flex-wrap:nowrap;white-space:nowrap}.section-label{white-space:nowrap}.header-probe{position:fixed!important;left:-10000px!important;top:0!important;width:max-content!important;max-width:none!important;min-width:0!important;visibility:hidden;pointer-events:none}.delete-section{position:absolute;right:6px;top:6px;width:24px;height:24px;margin:0;padding:0;border:1px solid #db6570;border-radius:4px;background:#8f2028;color:#fff;font:22px/1 system-ui;letter-spacing:0}.delete-section:hover{background:#bc2935}.popout-toggle[hidden]{display:none}.popout-toggle{position:absolute;left:6px;top:6px;width:24px;height:24px;margin:0;padding:0;display:inline-grid;place-items:center;font-size:16px;letter-spacing:0;cursor:pointer}.popout-toggle::before{content:'↗'}.popped-out>summary>.popout-toggle::before{content:'↙'}.popped-out{position:fixed;margin:0;pointer-events:auto;flex:none;box-shadow:0 6px 24px #0008;isolation:isolate}.popped-out:not([open]){height:auto!important}.popped-out>summary{cursor:grab;touch-action:none;user-select:none}.popped-out>summary:active{cursor:grabbing}details:not(.popped-out)>.group-events,details:not(.popped-out)>.pet-meals{max-height:40vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--align) transparent}.popped-out[open]>.group-events,.popped-out[open]>.pet-meals{max-height:var(--float-body-height);overflow:auto;overscroll-behavior:contain;padding-bottom:20px}.resize-handle{position:absolute;margin:0;padding:0;border:0;border-radius:0;background:transparent;z-index:2;touch-action:none}.popped-out:not([open])>.resize-handle{display:none}.resize-left,.resize-right{top:var(--float-body-start);bottom:20px;width:10px;height:auto;cursor:ew-resize}.resize-left{left:0}.resize-right{right:0}.resize-bottom{bottom:0;left:20px;right:20px;width:auto;height:10px;cursor:ns-resize}.resize-bottom-left,.resize-bottom-right{bottom:0;width:20px;height:20px}.resize-bottom-left{left:0;cursor:sw-resize}.resize-bottom-right{right:0;cursor:se-resize}.resize-handle:hover{background:#aaceec22}.resize-bottom-left::before,.resize-bottom-right::before{content:'';position:absolute;bottom:4px;width:8px;height:8px;border-bottom:2px solid #aaceec}.resize-bottom-right::before{right:4px;border-right:2px solid #aaceec}.resize-bottom-left::before{left:4px;border-left:2px solid #aaceec}.pet-row:empty{display:none}@media(max-width:767px){.event-group>summary{padding:12px 36px;overflow-x:auto}.popout-toggle{display:none}.hollow-heading{gap:8px;font-size:calc(13px * var(--header-scale,1))}.hollow-total{font-size:calc(11px * var(--header-scale,1))}.pet-group>summary{padding:12px 36px;font-size:calc(13px * var(--header-scale,1))}}`;
+  const controlsCss = `button{font-size:13px;font-family:var(--font-ui)}.event-meta-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.event-meta-row .metadata{min-width:0;overflow-wrap:anywhere}.delete-event{flex:none;width:auto;min-width:54px;height:26px;padding:2px 8px;margin:6px 0;background:#8f2028;border-color:#db6570;color:#fff;font-size:13px;font-family:var(--font-ui);line-height:1;border-radius:4px}.delete-event:hover{background:#bc2935}.pet-meal-heading .delete-event{width:auto;height:24px;margin:0;font-size:12px}#controls{position:fixed;bottom:6px;left:12px;display:flex;gap:8px;padding:0;border:0;background:transparent;pointer-events:none;z-index:1000000}#controls button{pointer-events:auto;opacity:1;margin:0}#status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}#popouts{pointer-events:none}.event-group>summary{position:relative;padding-left:82px;padding-right:82px;white-space:nowrap;overflow-wrap:normal;font-size:calc(16px * var(--header-scale,1))}.hollow-total{font-size:calc(13px * var(--header-scale,1))}.hollow-heading{flex-wrap:nowrap;white-space:nowrap}.section-label{white-space:nowrap}.header-probe{position:fixed!important;left:-10000px!important;top:0!important;width:max-content!important;max-width:none!important;min-width:0!important;visibility:hidden;pointer-events:none}.delete-section{position:absolute;right:6px;top:6px;min-width:66px;height:28px;margin:0;padding:2px 9px;border:1px solid #db6570;border-radius:4px;background:#8f2028;color:#fff;font-size:16px;font-family:var(--font-ui);font-weight:700;line-height:1;letter-spacing:0}.popped-out>summary{padding-left:126px;padding-right:126px}.popped-out>summary>.delete-section{right:44px}.dock-return{position:absolute;right:6px;top:6px;width:28px;height:28px;margin:0;padding:0;font:22px/1 system-ui;letter-spacing:0}.pet-group:not(.popped-out){min-width:min(100%,240px);flex-grow:1}.delete-section:hover{background:#bc2935}.popout-toggle[hidden]{display:none}.popout-toggle{position:absolute;left:6px;top:6px;width:24px;height:24px;margin:0;padding:0;display:inline-grid;place-items:center;font-size:16px;letter-spacing:0;cursor:pointer}.popout-toggle::before{content:'↗'}.popped-out>summary>.popout-toggle{width:28px;height:28px}.popped-out>summary>.popout-toggle::before{content:'↙'}.popped-out{position:fixed;margin:0;pointer-events:auto;flex:none;box-shadow:0 6px 24px #0008;isolation:isolate}.popped-out:not([open]){height:auto!important}.popped-out>summary{cursor:grab;touch-action:none;user-select:none}.popped-out>summary:active{cursor:grabbing}details:not(.popped-out)>.group-events,details:not(.popped-out)>.pet-meals{max-height:40vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--align) transparent}.popped-out[open]>.group-events,.popped-out[open]>.pet-meals{max-height:var(--float-body-height);overflow:auto;overscroll-behavior:contain;padding-bottom:20px}.resize-handle{position:absolute;margin:0;padding:0;border:0;border-radius:0;background:transparent;z-index:2;touch-action:none}.popped-out:not([open])>.resize-handle{display:none}.resize-left,.resize-right{top:var(--float-body-start);bottom:20px;width:10px;height:auto;cursor:ew-resize}.resize-left{left:0}.resize-right{right:0}.resize-bottom{bottom:0;left:20px;right:20px;width:auto;height:10px;cursor:ns-resize}.resize-bottom-left,.resize-bottom-right{bottom:0;width:20px;height:20px}.resize-bottom-left{left:0;cursor:sw-resize}.resize-bottom-right{right:0;cursor:se-resize}.resize-handle:hover{background:#aaceec22}.resize-bottom-left::before,.resize-bottom-right::before{content:'';position:absolute;bottom:4px;width:8px;height:8px;border-bottom:2px solid #aaceec}.resize-bottom-right::before{right:4px;border-right:2px solid #aaceec}.resize-bottom-left::before{left:4px;border-left:2px solid #aaceec}.pet-row:empty{display:none}@media(max-width:767px){.event-group>summary{padding:12px 82px;overflow-x:auto}.popout-toggle{display:none}.hollow-heading{gap:8px;font-size:calc(13px * var(--header-scale,1))}.hollow-total{font-size:calc(11px * var(--header-scale,1))}.pet-group>summary{padding:12px 82px;font-size:calc(13px * var(--header-scale,1))}}`;
   function syncControlVisibility() {
     const controls=shadow?.querySelector('#controls');
     if (controls) controls.style.visibility=/^\/poker(?:\/|$)/i.test(location.pathname)?'hidden':'';
