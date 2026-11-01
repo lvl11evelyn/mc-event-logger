@@ -160,3 +160,9 @@ Existing archived fights keep their original timestamps. Fights missed while the
 Version 0.6.9 includes persisted popout layout and preserves unfamiliar passive sibling banners in redesigned Arena snapshots. This avoids discarding new reward markup merely because its CSS class changed. Unknown special-reward wording may still need a parser update; a saved export or live DOM containing the message is needed to identify it.
 
 Version 0.6.10 recognizes `Special reward:` in native `.alert` containers regardless of capitalization or alert variant. The sibling reward does not depend on an equipment block being present. Existing saved text is also checked when rendering event headings and HTML exports.
+
+### Delete an entire section
+
+Version 0.6.11 adds a white × in a red rounded square at the far right of each category or pet header, beside the centered label/disclosure and opposite the popout toggle. Clicking it immediately deletes all currently saved records in that section and removes its header, including when the section is collapsed or popped out. Other categories and pets are unaffected. The latest deletion can be undone from the main panel: Undo restores the entire batch and its prior popout layout. Undo is kept in memory until navigation/reload or another deletion replaces it; exports taken before deletion remain an independent backup.
+
+Removed empty categories stay hidden across reloads. Newly captured events make their category appear again. This clears the recorded history, without disabling future capture. Live deleted records remain suppressed using the existing deletion markers. Section controls and layout/visibility preferences are excluded from event exports.
