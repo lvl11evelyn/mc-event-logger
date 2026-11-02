@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.6.13
+// @version      0.6.14
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -853,7 +853,7 @@
     host = document.createElement('div');
     host.id = 'maskedcity-event-archive';
     shadow = host.attachShadow({mode:'closed'});
-    shadow.innerHTML = `<style>:host{all:initial;position:fixed;inset:0;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}button{font:inherit;background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:7px;cursor:pointer;margin:3px}dialog{pointer-events:auto;position:fixed;inset:auto;left:12px;bottom:var(--panel-bottom,52px);margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1180px,calc(100vw - 24px));height:auto;max-height:calc(100dvh - var(--panel-bottom,52px) - 8px);padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}${petCss}${controlsCss}</style><div id="controls"><button id="review">Review</button><button id="manual">Capture page</button></div><span id="status" role="status"></span><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="undo" hidden>Undo delete</button><button id="close">Close</button></div><div id="events"></div></dialog><div id="popouts"></div>`;
+    shadow.innerHTML = `<style>:host{all:initial;position:fixed;inset:0;z-index:2147483646;font:13px system-ui;color:#edf3fa;pointer-events:none}button{font:var(--font-ui);background:#263e55;color:#fff;border:1px solid #7890a8;border-radius:4px;padding:3px 7px;cursor:pointer;margin:3px}dialog{pointer-events:auto;position:fixed;inset:auto;left:12px;bottom:var(--panel-bottom,52px);margin:0;background:#101b27;color:#edf3fa;border:1px solid #7890a8;border-radius:8px;width:min(1180px,calc(100vw - 24px));height:auto;max-height:calc(100dvh - var(--panel-bottom,52px) - 8px);padding:14px}dialog[open]{display:flex;flex-direction:column}.toolbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px}.toolbar strong{margin-right:auto}#events{flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;margin-top:10px;padding-right:6px}${contentCss}${groupCss}${petCss}${controlsCss}</style><div id="controls"><button id="review">Review</button><button id="manual">Capture page</button></div><span id="status" role="status"></span><dialog aria-label="MaskedCity saved events"><div class="toolbar"><strong>Saved events</strong><button id="refresh">Refresh</button><button id="json">Export JSON</button><button id="html">Export HTML</button><button id="undo" hidden>Undo delete</button><button id="close">Close</button></div><div id="events"></div></dialog><div id="popouts"></div>`;
     document.body.append(host);
     shadow.querySelector('#review').onclick = () => {
       const dialog = shadow.querySelector('dialog');
