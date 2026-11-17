@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MaskedCity Event Archive
 // @namespace    local.maskedcity.archive
-// @version      0.6.14
+// @version      0.6.17
 // @homepageURL  https://github.com/lvl11evelyn/mc-event-logger/blob/main/README.md
 // @updateURL    https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
 // @downloadURL  https://github.com/lvl11evelyn/mc-event-logger/raw/refs/heads/main/maskedcity-archive.user.js
@@ -272,9 +272,48 @@
     hollowFights.set(panel,state);
     save(state.token,payload);
   }
+  const PET_ICONS = {
+    'pit bull':'🐶','street dog':'🐕','bat':'🦇','greyhound':'🐺','police k9':'🐕‍🦺',
+    'snapping turtle':'🐢','tarantula':'🕷️','black cat':'🐈‍⬛','fox':'🦊','raccoon':'🦝',
+    'alley cat':'🐈','ninja cat':'🐾','crow':'🐦‍⬛','gecko':'🦎','iguana':'🦖',
+    'possum':'🐀','parrot':'🦜','street pigeon':'🕊️'
+  };
+  function petSpecies(scope) {
+    const candidates=[scope?.querySelector('.pt-hero img[alt]')?.alt,
+      ...Array.from(scope?.querySelectorAll('.pt-hero .ax-tag') || [],clean)];
+    return candidates.map(label=>label?.trim().toLowerCase()).find(label=>Object.hasOwn(PET_ICONS,label)) || '';
+  }
+  const PET_SPECIES_PREFIX = 'mc-pet-species-v1:';
+  const observedPetHeroes = new WeakMap();
+  function storedPetSpecies(id) {
+    const species=GM_getValue(PET_SPECIES_PREFIX+id);
+    return typeof species==='string' && Object.hasOwn(PET_ICONS,species) ? species : '';
+  }
+  function petPageMatches(page,id) {
+    // A previous pet's DOM can still be visible after the route changes.
+    const actionId=page?.querySelector('form[action^="/pets/"]')?.getAttribute('action')
+      ?.match(/^\/pets\/(\d+)\//)?.[1];
+    const observed=observedPetHeroes.get(page?.querySelector('.pt-hero'));
+    return actionId ? actionId===id : !observed || observed===id;
+  }
+  function rememberPetSpecies() {
+    const id=location.pathname.match(/^\/pets\/(\d+)\/?$/)?.[1];
+    if (!id) return;
+    const page=document.querySelector('.pt-page'),hero=page?.querySelector('.pt-hero');
+    if (!hero) return;
+    if (!petPageMatches(page,id) || observedPetHeroes.get(hero)===id) return;
+    const species=petSpecies(page);
+    if (!species) return;
+    try {
+      const changed=storedPetSpecies(id)!==species;
+      if (changed) GM_setValue(PET_SPECIES_PREFIX+id,species);
+      observedPetHeroes.set(hero,id);
+      if (changed && shadow && (popouts.has('pet:'+id) || shadow.querySelector('dialog').open)) scheduleRender();
+    } catch (failure) { console.error('MaskedCity archive could not save pet species',failure); }
+  }
   function capturePetMeal(alert, changed = false) {
     const petId = location.pathname.match(/^\/pets\/(\d+)\/?$/)?.[1];
-    if (!petId) return;
+    if (!petId || !petPageMatches(alert.closest('.pt-page'),petId)) return;
     const full = clean(alert);
     const meal = full.match(/^(.+?) ate (.+?)\.\s*\(([^)]+)\)/);
     const levelMeal = full.match(/^(.+?) ate (.+?) and ((?:leveled|levelled) up\b.*)$/i);
@@ -299,7 +338,7 @@
     petAlerts.set(alert, state);
     const levelAfter = clean(scope?.querySelector('.ax-stat__k'));
     save(state.token, {
-      type:'pet-feeding', petId, petName, title:`${petName} · ${food}`,
+      type:'pet-feeding', petId, petName, petSpecies:petSpecies(scope), title:`${petName} · ${food}`,
       food, gains, mealText:`${food}.${gains ? ` (${gains.replace(/\blife\b/gi, 'LIFE')})` : ''}`,
       notices, levelUps, levelAfter: /^Level\s+\d+/i.test(levelAfter) ? levelAfter : '',
       text: full,
@@ -359,7 +398,7 @@
     const now = new Date().toISOString();
     const serverTime = readServerTime(now);
     const record = state ? structuredClone(state.record) : {
-      schemaVersion: 1, recorderVersion: '0.6.12', id: crypto.randomUUID(),
+      schemaVersion: 1, recorderVersion: '0.6.17', id: crypto.randomUUID(),
       firstObservedAt: now, firstServerTime: serverTime, source: {origin: location.origin, path: location.pathname},
       captureMethod: forceNew ? 'manual' : 'dom-observer', revisions: []
     };
@@ -379,6 +418,7 @@
   }
   function scan(root = document) {
     if (!allowed() || !root.querySelectorAll) return;
+    if (root===document) rememberPetSpecies();
     const reports = Array.from(root.querySelectorAll(RESULT_SELECTOR));
     if (root.matches?.(RESULT_SELECTOR)) reports.push(root);
     reports.forEach(report => {
@@ -550,7 +590,9 @@
       const type = record.revisions.at(-1)?.type;
       if (type === 'pet-feeding') {
         const meal = record.revisions.at(-1);
-        if (!pets.has(meal.petId)) pets.set(meal.petId, {name:meal.petName, events:[]});
+        if (!pets.has(meal.petId)) pets.set(meal.petId, {name:meal.petName, species:editable ? storedPetSpecies(meal.petId) : '', events:[]});
+        const pet=pets.get(meal.petId);
+        if (!pet.species && Object.hasOwn(PET_ICONS,meal.petSpecies)) pet.species=meal.petSpecies;
         pets.get(meal.petId).events.push(record);
         continue;
       }
@@ -562,7 +604,7 @@
     }
     const hollowHeading=`<span class="hollow-heading"><b>THE HOLLOW</b>${[['speed','Spd'],['power','Pow'],['strength','Str']].map(([stat,label])=>`<span class="hollow-total ${stat}" data-stat="${stat}" title="Stat gains in retained Hollow fight records">${label}: ${hollowTotals[stat]>=0?'+':''}${hollowTotals[stat]}</span>`).join('')}</span>`;
     const groupMarkup = group => `<details class="event-group" data-type="${group.type}"><summary>${group.type==='hollow'?hollowHeading:group.label}</summary><div class="group-events">${group.events.map(record=>eventMarkup(record,editable)).join('') || '<p class="metadata">No events saved yet.</p>'}</div></details>`;
-    const petMarkup = pets.size ? `<div class="pet-row" aria-label="Pet meal histories">${Array.from(pets, ([id, pet]) => `<details class="event-group pet-group" data-type="pet:${escape(id)}"><summary>${escape(pet.name)}</summary><div class="pet-meals">${pet.events.map(record => {
+    const petMarkup = pets.size ? `<div class="pet-row" aria-label="Pet meal histories">${Array.from(pets, ([id, pet]) => `<details class="event-group pet-group" data-type="pet:${escape(id)}"${editable && pet.species ? ` data-species="${escape(pet.species)}"` : ''}><summary>${escape(pet.name)}</summary><div class="pet-meals">${pet.events.map(record => {
       const meal = record.revisions.at(-1);
       return `<div class="pet-meal" data-id="${escape(record.id)}"><div class="pet-meal-heading"><p>${escape(meal.mealText)}</p><time class="pet-time" datetime="${escape(record.firstObservedAt)}" title="${escape(formatTime(record.firstObservedAt, record.firstServerTime))}">${escape(formatMealTime(record.firstObservedAt, record.firstServerTime))}</time>${editable ? deleteControl(record) : ''}</div>${(meal.notices || meal.levelUps || []).map(line => `<p class="pet-level-up">${escape(line)}</p>`).join('')}</div>`;
     }).join('')}</div></details>`).join('')}</div>` : '';
@@ -590,6 +632,25 @@
       || group.querySelector(':scope > summary .section-label')?.textContent.trim()
       || group.querySelector(':scope > summary').textContent.trim();
   }
+  function setCircleIcon(button,group) {
+    const type=group.dataset.type;
+    const icons={streets:['/streets','g-direction-signs'],arena:['/arena','g-roman-shield'],hollow:['/halloween/hollow','']};
+    const entry=icons[type];
+    if (entry) {
+      const [path,symbol]=entry;
+      const native=document.querySelector('a[href="'+path+'"] svg use');
+      const href=native?.getAttribute('href') || native?.getAttribute('xlink:href') || '';
+      const sprite=/^\/icons\/app-sprite\.svg(?:\?[^#]*)?#[\w-]+$/.test(href) ? href : symbol && '/icons/app-sprite.svg#'+symbol;
+      if (sprite) {
+        const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg'),use=document.createElementNS(ns,'use');
+        svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');
+        svg.setAttribute('viewBox',native?.ownerSVGElement?.getAttribute('viewBox') || '0 0 512 512');
+        use.setAttribute('href',sprite);svg.append(use);button.replaceChildren(svg);return;
+      }
+    }
+    const species=group.dataset.species;
+    button.textContent=type.startsWith('pet:') ? PET_ICONS[species] || '🐾' : type==='hollow' ? '👻' : '•';
+  }
   function decorateGroup(group) {
     const summary=group.querySelector(':scope > summary');
     if (!summary.querySelector('.section-label')) {
@@ -606,17 +667,18 @@
       remove.title='Delete this section and its records';summary.append(remove);
     }
     const popped=group.classList.contains('popped-out');
-    let returnButton=summary.querySelector('.dock-return');
-    if (popped && !returnButton) {
-      returnButton=document.createElement('button');returnButton.type='button';returnButton.className='dock-return';
-      returnButton.textContent='×';summary.append(returnButton);
+    let minimize=summary.querySelector('.minimize-popout'),circle=summary.querySelector('.popout-circle');
+    if (popped && !minimize) {
+      minimize=document.createElement('button');minimize.type='button';minimize.className='minimize-popout';
+      minimize.textContent='−';minimize.title='Minimize popout';
+      minimize.setAttribute('aria-label',`Minimize ${sectionLabel(group)}`);summary.append(minimize);
     }
-    if (returnButton) {
-      if (popped) {
-        returnButton.setAttribute('aria-label',`Return ${sectionLabel(group)} to panel`);
-        returnButton.title='Return to panel';
-      } else returnButton.remove();
+    if (popped && !circle) {
+      circle=document.createElement('button');circle.type='button';circle.className='popout-circle';
+      circle.title=`Restore ${sectionLabel(group)}`;circle.setAttribute('aria-label',circle.title);
+      setCircleIcon(circle,group);summary.append(circle);
     }
+    if (!popped) {minimize?.remove();circle?.remove();}
     const button=summary.querySelector('.popout-toggle');
     button.setAttribute('aria-label',`${popped?'Dock':'Pop out'} ${sectionLabel(group)}`);
     button.setAttribute('aria-pressed',String(popped));button.title=button.getAttribute('aria-label');
@@ -649,8 +711,12 @@
       if (saved?.schemaVersion!==1) return result;
       for (const [type,box] of Object.entries(saved.sections || {})) {
         if (!/^(streets|arena|hollow|other|pet:\d+)$/.test(type) || !box) continue;
-        if (['left','top','width','height'].every(key=>Number.isFinite(box[key])) && box.width>0 && box.height>0)
-          result[type]={left:box.left,top:box.top,width:box.width,height:box.height,open:box.open===true};
+        if (['left','top','width','height'].every(key=>Number.isFinite(box[key])) && box.width>0 && box.height>0) {
+          const restore=box.restore;
+          result[type]={left:box.left,top:box.top,width:box.width,height:box.height,open:box.open===true,minimized:box.minimized===true,
+            restore:box.minimized && Number.isFinite(restore?.left) && Number.isFinite(restore?.top)
+              ? {left:restore.left,top:restore.top} : null};
+        }
       }
     } catch (_) { /* A bad layout must not prevent event recording. */ }
     return result;
@@ -659,16 +725,22 @@
     try { GM_setValue(LAYOUT_KEY,{schemaVersion:1,sections:structuredClone(layoutPreferences)}); }
     catch (failure) { indicate(`Layout save failed: ${failure.message || failure}`); }
   }
+  function popoutBox(group) {
+    return {left:parseFloat(group.style.left),top:parseFloat(group.style.top),
+      width:parseFloat(group.style.width),height:parseFloat(group.style.height)};
+  }
   function rememberPopout(group) {
-    if (!group.classList.contains('popped-out')) return;
-    layoutPreferences[group.dataset.type]={left:parseFloat(group.style.left),top:parseFloat(group.style.top),
-      width:parseFloat(group.style.width),height:parseFloat(group.style.height),open:group.open};
+    const state=popouts.get(group.dataset.type);
+    if (state?.group!==group) return;
+    const minimized=group.classList.contains('minimized');
+    layoutPreferences[group.dataset.type]={...popoutBox(group),open:group.open,minimized,
+      restore:minimized ? state.restore : null};
     persistLayout();
   }
   function detachGroup(group,box) {
     const type=group.dataset.type,placeholder=document.createComment(`Dock ${type}`);
-    group.replaceWith(placeholder);group.style.removeProperty('--header-scale');group.classList.add('popped-out');
-    shadow.querySelector('#popouts').append(group);popouts.set(type,{group,placeholder});
+    group.replaceWith(placeholder);group.style.removeProperty('--header-scale');group.classList.add('popped-out');group.classList.toggle('minimized',box.minimized===true);
+    shadow.querySelector('#popouts').append(group);popouts.set(type,{group,placeholder,restore:box.restore || null});
     group.style.zIndex=String(++popoutLayer);decorateGroup(group);placePopout(group,box);
   }
   function restorePopouts() {
@@ -681,13 +753,20 @@
   }
   function dockGroup(type,state) {
     state.placeholder.replaceWith(state.group);popouts.delete(type);
-    state.group.classList.remove('popped-out');state.group.removeAttribute('style');
+    state.group.classList.remove('popped-out','minimized');state.group.removeAttribute('style');
     state.group.querySelectorAll(':scope > .resize-handle').forEach(el=>el.remove());
     decorateGroup(state.group);
   }
   function placePopout(group, box) {
     const width=Math.max(headerMinimum(group),box.width),height=Math.max(120,box.height);
     Object.assign(group.style,{width:`${width}px`,height:`${height}px`});
+    if (group.classList.contains('minimized')) {
+      const circle=group.getBoundingClientRect();
+      const left=Math.max(0,Math.min(innerWidth-circle.width,box.left));
+      const top=Math.max(0,Math.min(innerHeight-circle.height,box.top));
+      Object.assign(group.style,{left:`${left}px`,top:`${top}px`});
+      return;
+    }
     // Only the draggable header must stay reachable; its body may be off-screen.
     const container=group.getBoundingClientRect();
     const header=group.querySelector(':scope > summary').getBoundingClientRect();
@@ -724,10 +803,7 @@
         scale*=available/width;group.style.setProperty('--header-scale',String(scale));
       }
     });
-    for (const {group} of popouts.values()) placePopout(group,{
-      left:parseFloat(group.style.left),top:parseFloat(group.style.top),
-      width:parseFloat(group.style.width),height:parseFloat(group.style.height)
-    });
+    for (const {group} of popouts.values()) placePopout(group,popoutBox(group));
   }
   function togglePopout(group) {
     const type=group.dataset.type,existing=popouts.get(type);
@@ -754,6 +830,7 @@
       if (!fresh) {state.group.remove();popouts.delete(type);continue;}
       const body=state.group.querySelector(':scope > .group-events, :scope > .pet-meals');
       const scroll=body?.scrollTop || 0;
+      state.group.dataset.species=fresh.dataset.species || '';
       state.group.replaceChildren(...fresh.childNodes);
       state.placeholder=document.createComment(`Dock ${type}`);fresh.replaceWith(state.placeholder);
       const newBody=state.group.querySelector(':scope > .group-events, :scope > .pet-meals');
@@ -780,13 +857,38 @@
   }
   function installPopoutInteraction() {
     let suppressedSummary=null;
+    shadow.addEventListener('dragstart',event=>{
+      if (event.target.closest('.popout-circle')) event.preventDefault();
+    });
     shadow.addEventListener('click',event=>{
       if (suppressedSummary?.contains(event.target)) {
         event.preventDefault();event.stopPropagation();suppressedSummary=null;return;
       }
       const remove=event.target.closest('.delete-section');
       if (remove) {event.preventDefault();event.stopPropagation();deleteSection(remove.closest('.event-group'));return;}
-      const toggle=event.target.closest('.popout-toggle, .dock-return');
+      const minify=event.target.closest('.minimize-popout, .popout-circle');
+      if (minify) {
+        event.preventDefault();event.stopPropagation();
+        const group=minify.closest('.popped-out');
+        const state=popouts.get(group.dataset.type),box=popoutBox(group);
+        const target=minify.getBoundingClientRect();
+        const minimized=group.classList.toggle('minimized');
+        if (minimized) {
+          state.restore={left:box.left,top:box.top};
+          setCircleIcon(group.querySelector('.popout-circle'),group);
+          const circle=group.getBoundingClientRect();
+          const x=event.detail>0 ? event.clientX : target.left+target.width/2;
+          const y=event.detail>0 ? event.clientY : target.top+target.height/2;
+          placePopout(group,{...box,left:x-circle.width/2,top:y-circle.height/2});
+        } else {
+          placePopout(group,{...box,...state.restore});
+          state.restore=null;
+        }
+        rememberPopout(group);
+        group.querySelector(minimized?'.popout-circle':'.minimize-popout')?.focus({preventScroll:true});
+        return;
+      }
+      const toggle=event.target.closest('.popout-toggle');
       if (toggle) {event.preventDefault();event.stopPropagation();togglePopout(toggle.closest('.event-group'));}
     },true);
     shadow.addEventListener('pointerdown',event=>{
@@ -798,13 +900,14 @@
       const handle=event.target.closest('.resize-handle');
       if (handle && !group.open) return;
       const summary=group.querySelector(':scope > summary');
-      if (!handle && (!summary.contains(event.target) || event.target.closest('button,a,input'))) return;
+      const circle=event.target.closest('.popout-circle');
+      if (!circle && !handle && (!summary.contains(event.target) || event.target.closest('button,a,input'))) return;
       const rect=group.getBoundingClientRect();
-      gesture={group,summary,target:handle || summary,pointerId:event.pointerId,
+      gesture={group,summary,target:circle || handle || summary,pointerId:event.pointerId,
         mode:handle?'resize':'drag',side:handle?.dataset.resize,x:event.clientX,y:event.clientY,moved:false,
-        base:{left:rect.left,top:rect.top,width:rect.width,height:parseFloat(group.style.height),minimumWidth:headerMinimum(group)}};
+        base:{left:rect.left,top:rect.top,width:parseFloat(group.style.width),height:parseFloat(group.style.height),minimumWidth:headerMinimum(group)}};
       gesture.target.setPointerCapture(event.pointerId);
-      if (handle) event.preventDefault();
+      if (handle || circle) event.preventDefault();
     });
     shadow.addEventListener('pointermove',event=>{
       if (!gesture || gesture.pointerId!==event.pointerId) return;
@@ -819,7 +922,15 @@
       if (!gesture || gesture.pointerId!==event.pointerId) return;
       if (gesture.moved && gesture.mode==='drag' && event.type!=='pointercancel') suppressedSummary=gesture.summary;
       if (gesture.target.hasPointerCapture(event.pointerId)) gesture.target.releasePointerCapture(event.pointerId);
-      if (gesture.moved) rememberPopout(gesture.group);
+      if (gesture.moved) {
+        const {group,base,target}=gesture;
+        const state=popouts.get(group.dataset.type);
+        if (state && target.matches('.popout-circle')) {
+          const box=popoutBox(group),origin=state.restore || base;
+          state.restore={left:origin.left+box.left-base.left,top:origin.top+box.top-base.top};
+        }
+        rememberPopout(group);
+      }
       gesture=null;
       if (renderPending) {renderPending=false;scheduleRender();}
     };
@@ -839,7 +950,7 @@
     },true);
   }
   // Independent controls and dockable section surfaces.
-  const controlsCss = `button{font-size:13px;font-family:var(--font-ui)}.event-meta-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.event-meta-row .metadata{min-width:0;overflow-wrap:anywhere}.delete-event{flex:none;width:auto;min-width:54px;height:26px;padding:2px 8px;margin:6px 0;background:#8f2028;border-color:#db6570;color:#fff;font-size:13px;font-family:var(--font-ui);line-height:1;border-radius:4px}.delete-event:hover{background:#bc2935}.pet-meal-heading .delete-event{width:auto;height:24px;margin:0;font-size:12px}#controls{position:fixed;bottom:4px;left:12px;display:flex;gap:8px;padding:0;border:0;background:transparent;pointer-events:none;z-index:1000000}#controls button{pointer-events:auto;opacity:1;margin:0}#status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}#popouts{pointer-events:none}.event-group>summary{position:relative;padding-left:82px;padding-right:82px;white-space:nowrap;overflow-wrap:normal;font-size:calc(16px * var(--header-scale,1))}.hollow-total{font-size:calc(13px * var(--header-scale,1))}.hollow-heading{flex-wrap:nowrap;white-space:nowrap}.section-label{white-space:nowrap}.header-probe{position:fixed!important;left:-10000px!important;top:0!important;width:max-content!important;max-width:none!important;min-width:0!important;visibility:hidden;pointer-events:none}.delete-section{position:absolute;right:6px;top:6px;min-width:66px;height:28px;margin:0;padding:2px 9px;border:1px solid #db6570;border-radius:4px;background:#8f2028;color:#fff;font-size:16px;font-family:var(--font-ui);font-weight:700;line-height:1;letter-spacing:0}.popped-out>summary{padding-left:126px;padding-right:126px}.popped-out>summary>.delete-section{right:44px}.dock-return{position:absolute;right:6px;top:6px;width:28px;height:28px;margin:0;padding:0;font:22px/1 system-ui;letter-spacing:0}.pet-group:not(.popped-out){min-width:min(100%,240px);flex-grow:1}.delete-section:hover{background:#bc2935}.popout-toggle[hidden]{display:none}.popout-toggle{position:absolute;left:6px;top:6px;width:24px;height:24px;margin:0;padding:0;display:inline-grid;place-items:center;font-size:16px;letter-spacing:0;cursor:pointer}.popout-toggle::before{content:'↗'}.popped-out>summary>.popout-toggle{width:28px;height:28px}.popped-out>summary>.popout-toggle::before{content:'↙'}.popped-out{position:fixed;margin:0;pointer-events:auto;flex:none;box-shadow:0 6px 24px #0008;isolation:isolate}.popped-out:not([open]){height:auto!important}.popped-out>summary{cursor:grab;touch-action:none;user-select:none}.popped-out>summary:active{cursor:grabbing}details:not(.popped-out)>.group-events,details:not(.popped-out)>.pet-meals{max-height:40vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--align) transparent}.popped-out[open]>.group-events,.popped-out[open]>.pet-meals{max-height:var(--float-body-height);overflow:auto;overscroll-behavior:contain;padding-bottom:20px}.resize-handle{position:absolute;margin:0;padding:0;border:0;border-radius:0;background:transparent;z-index:2;touch-action:none}.popped-out:not([open])>.resize-handle{display:none}.resize-left,.resize-right{top:var(--float-body-start);bottom:20px;width:10px;height:auto;cursor:ew-resize}.resize-left{left:0}.resize-right{right:0}.resize-bottom{bottom:0;left:20px;right:20px;width:auto;height:10px;cursor:ns-resize}.resize-bottom-left,.resize-bottom-right{bottom:0;width:20px;height:20px}.resize-bottom-left{left:0;cursor:sw-resize}.resize-bottom-right{right:0;cursor:se-resize}.resize-handle:hover{background:#aaceec22}.resize-bottom-left::before,.resize-bottom-right::before{content:'';position:absolute;bottom:4px;width:8px;height:8px;border-bottom:2px solid #aaceec}.resize-bottom-right::before{right:4px;border-right:2px solid #aaceec}.resize-bottom-left::before{left:4px;border-left:2px solid #aaceec}.pet-row:empty{display:none}@media(max-width:767px){.event-group>summary{padding:12px 82px;overflow-x:auto}.popout-toggle{display:none}.hollow-heading{gap:8px;font-size:calc(13px * var(--header-scale,1))}.hollow-total{font-size:calc(11px * var(--header-scale,1))}.pet-group>summary{padding:12px 82px;font-size:calc(13px * var(--header-scale,1))}}`;
+  const controlsCss = `button{font-size:13px;font-family:var(--font-ui)}.event-meta-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.event-meta-row .metadata{min-width:0;overflow-wrap:anywhere}.delete-event{flex:none;width:auto;min-width:54px;height:26px;padding:2px 8px;margin:6px 0;background:#8f2028;border-color:#db6570;color:#fff;font-size:13px;font-family:var(--font-ui);line-height:1;border-radius:4px}.delete-event:hover{background:#bc2935}.pet-meal-heading .delete-event{width:auto;height:24px;margin:0;font-size:12px}#controls{position:fixed;bottom:4px;left:12px;display:flex;gap:8px;padding:0;border:0;background:transparent;pointer-events:none;z-index:1000000}#controls button{pointer-events:auto;opacity:1;margin:0}#status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}#popouts{pointer-events:none}.event-group>summary{position:relative;padding-left:82px;padding-right:82px;white-space:nowrap;overflow-wrap:normal;font-size:calc(16px * var(--header-scale,1))}.hollow-total{font-size:calc(13px * var(--header-scale,1))}.hollow-heading{flex-wrap:nowrap;white-space:nowrap}.section-label{white-space:nowrap}.header-probe{position:fixed!important;left:-10000px!important;top:0!important;width:max-content!important;max-width:none!important;min-width:0!important;visibility:hidden;pointer-events:none}.delete-section{position:absolute;right:6px;top:6px;min-width:66px;height:28px;margin:0;padding:2px 9px;border:1px solid #db6570;border-radius:4px;background:#8f2028;color:#fff;font-size:16px;font-family:var(--font-ui);font-weight:700;line-height:1;letter-spacing:0}.popped-out>summary{padding-left:126px;padding-right:126px}.popped-out>summary>.delete-section{right:44px}.minimize-popout{position:absolute;right:6px;top:6px;width:28px;height:28px;margin:0;padding:0;font:22px/1 system-ui;letter-spacing:0}.pet-group:not(.popped-out){min-width:min(100%,240px);flex-grow:1}.delete-section:hover{background:#bc2935}.popout-toggle[hidden]{display:none}.popout-toggle{position:absolute;left:6px;top:6px;width:24px;height:24px;margin:0;padding:0;display:inline-grid;place-items:center;font-size:16px;letter-spacing:0;cursor:pointer}.popout-toggle::before{content:'↗'}.popped-out>summary>.popout-toggle{width:28px;height:28px}.popped-out>summary>.popout-toggle::before{content:'↙'}.popped-out{position:fixed;margin:0;pointer-events:auto;flex:none;box-shadow:0 6px 24px #0008;isolation:isolate}.popped-out:not([open]){height:auto!important}.popout-circle{display:none}.popped-out.minimized{width:44px!important;height:44px!important;border-radius:50%}.minimized>summary{display:block;padding:0;width:100%;height:100%;border:0;border-radius:50%}.minimized>summary::after,.minimized>summary>:not(.popout-circle),.popped-out.minimized>:not(summary){display:none}.minimized .popout-circle{display:grid;place-items:center;width:100%;height:100%;margin:0;padding:0;border:0;border-radius:50%;background:transparent;font:22px/1 system-ui;cursor:grab;touch-action:none;user-select:none}.minimized .popout-circle:active{cursor:grabbing}.popout-circle:focus-visible{outline-offset:-3px}.popout-circle svg{width:23px;height:23px;fill:currentColor;pointer-events:none}.popped-out>summary{cursor:grab;touch-action:none;user-select:none}.popped-out>summary:active{cursor:grabbing}details:not(.popped-out)>.group-events,details:not(.popped-out)>.pet-meals{max-height:40vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--align) transparent}.popped-out[open]>.group-events,.popped-out[open]>.pet-meals{max-height:var(--float-body-height);overflow:auto;overscroll-behavior:contain;padding-bottom:20px}.resize-handle{position:absolute;margin:0;padding:0;border:0;border-radius:0;background:transparent;z-index:2;touch-action:none}.popped-out:not([open])>.resize-handle{display:none}.resize-left,.resize-right{top:var(--float-body-start);bottom:20px;width:10px;height:auto;cursor:ew-resize}.resize-left{left:0}.resize-right{right:0}.resize-bottom{bottom:0;left:20px;right:20px;width:auto;height:10px;cursor:ns-resize}.resize-bottom-left,.resize-bottom-right{bottom:0;width:20px;height:20px}.resize-bottom-left{left:0;cursor:sw-resize}.resize-bottom-right{right:0;cursor:se-resize}.resize-handle:hover{background:#aaceec22}.resize-bottom-left::before,.resize-bottom-right::before{content:'';position:absolute;bottom:4px;width:8px;height:8px;border-bottom:2px solid #aaceec}.resize-bottom-right::before{right:4px;border-right:2px solid #aaceec}.resize-bottom-left::before{left:4px;border-left:2px solid #aaceec}.pet-row:empty{display:none}@media(max-width:767px){.event-group>summary{padding:12px 82px;overflow-x:auto}.popout-toggle{display:none}.hollow-heading{gap:8px;font-size:calc(13px * var(--header-scale,1))}.hollow-total{font-size:calc(11px * var(--header-scale,1))}.pet-group>summary{padding:12px 82px;font-size:calc(13px * var(--header-scale,1))}}`;
   function syncControlVisibility() {
     const controls=shadow?.querySelector('#controls');
     if (controls) controls.style.visibility=/^\/poker(?:\/|$)/i.test(location.pathname)?'hidden':'';
